@@ -5,14 +5,37 @@
 
 ![技术栈](https://img.shields.io/badge/python-%3E%3D3.8-blue) ![依赖](https://img.shields.io/badge/dependencies-none-green)
 
-## 快速开始
+## 在线访问（GitHub Pages）
+
+**https://tsingshuizhang.github.io/ssq-lottery-web/static/**
+
+页面完全静态化：统计数据以预计算 JSON 形式存放在仓库中，号码推荐在浏览器端完成，
+无需任何后端服务。
+
+## 数据自动更新（GitHub Actions）
+
+`.github/workflows/update-data.yml` 定时任务在**每周二、四、日开奖后**
+（北京时间 21:50）自动执行：
+
+```
+拉取福彩官网最新开奖数据 → 合并去重写入 ssq_data.json
+→ 重新生成 static/data/ 全部统计文件 → 自动提交并推送到本仓库
+```
+
+页面切换统计窗口时直接读取仓库中对应窗口的静态 JSON 文件，无需任何计算或请求后端。
+也可在 Actions 页面手动触发 `workflow_dispatch`。
+
+## 本地运行
 
 ```bash
-# 启动 Web 服务
+# 启动 Web 服务（本地开发/完整功能）
 python3 ssq_web.py            # 打开 http://127.0.0.1:8000
 
 # 或命令行模式
 python3 ssq.py                # 分析 + 推荐 10 组号码
+
+# 手动更新数据（会同步重新生成 static/data/ 静态文件）
+python3 tools/update_data.py
 ```
 
 > ⚠️ 注意：Web 页面必须通过 `http://127.0.0.1:8000` 访问，不要直接双击打开 `static/index.html`。
@@ -22,16 +45,19 @@ python3 ssq.py                # 分析 + 推荐 10 组号码
 - 📊 冷热号统计、遗漏值分析、奇偶形态分布
 - 🗺️ 红蓝球频率热力图（悬停查看次数与遗漏）
 - 🎲 加权概率模型一键生成 10 组推荐号码（频率 50% + 遗漏 30% + 随机 20%）
-- 🔄 一键从福彩官网更新历史开奖数据
+- 🔄 定时自动更新历史开奖数据（GitHub Actions）
 
 ## 目录结构
 
 | 文件 | 说明 |
 |------|------|
-| `ssq.py` | 核心算法库 + CLI 入口 |
-| `ssq_web.py` | Web 服务端（标准库 http.server） |
+| `ssq.py` | 核心算法库 + CLI 入口（含静态统计导出） |
+| `ssq_web.py` | 本地 Web 服务端（标准库 http.server，可选） |
 | `ssq_data.json` | 历史开奖数据 |
 | `static/` | 前端页面（原生 HTML/CSS/JS） |
+| `static/data/` | **预计算静态统计文件**（stats_*.json / weights.json / info.json） |
+| `tools/update_data.py` | 远端/本地通用数据更新脚本 |
+| `.github/workflows/` | GitHub Actions 定时自动更新工作流 |
 | `DESIGN.md` | 完整设计说明书 |
 
 ## 免责声明

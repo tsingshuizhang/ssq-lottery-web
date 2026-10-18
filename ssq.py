@@ -20,11 +20,14 @@ import random
 import ssl
 import sys
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 RED_MIN, RED_MAX, RED_COUNT = 1, 33, 6
 BLUE_MIN, BLUE_MAX = 1, 16
 DATA_FILE = Path(__file__).parent / "ssq_data.json"
+STATIC_DIR = Path(__file__).parent / "static" / "data"
+WINDOWS = (20, 30, 50, 100)  # 前端可选的统计窗口（与 static/index.html 下拉框一致）
 API_URL = (
     "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/"
     "findDrawNotice?name=ssq&issueCount={count}"
@@ -73,7 +76,42 @@ def update_data(count=100):
     DATA_FILE.write_text(
         json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    export_static(merged)
     print(f"数据更新完成，共 {len(merged)} 期（{merged[0]['issue']} ~ {merged[-1]['issue']}）")
+
+
+def export_static(draws):
+    """预生成前端所需的静态 JSON 文件（static/data/）。
+
+    - stats_<窗口>.json：各统计窗口的完整统计结果（前端切换窗口时直接读取，
+      无需请求后端计算）；
+    - weights.json：推荐模型基础得分（频率 50% + 遗漏 30%，不含随机项，
+      随机扰动由前端在每次生成时加入）；
+    - info.json：数据概况与生成时间。
+
+    这些文件提交进 git 后，GitHub Pages 上的纯静态页面即可完整运行，
+    并由 GitHub Actions 在每期开奖后自动重新生成。
+    """
+    STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    for w in WINDOWS:
+        payload = stats_dict(draws, min(w, len(draws)))
+        (STATIC_DIR / f"stats_{w}.json").write_text(
+            json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    red_base, blue_base = base_scores(draws)
+    weights = {"red": sorted(red_base.items()), "blue": sorted(blue_base.items())}
+    (STATIC_DIR / "weights.json").write_text(
+        json.dumps(weights, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    info = {
+        "total": len(draws),
+        "range": [draws[0]["issue"], draws[-1]["issue"]],
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    (STATIC_DIR / "info.json").write_text(
+        json.dumps(info, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    print(f"静态统计文件已生成 → {STATIC_DIR}")
 
 
 # ---------------------------------------------------------------- 统计分析
@@ -161,15 +199,11 @@ def show_stats(draws, window=30):
 
 # ---------------------------------------------------------------- 推荐算法
 
-def score_weights(draws, w_freq=0.5, w_omit=0.3, w_rand=0.2, decay=0.97):
-    """计算红球/蓝球权重。
+def base_scores(draws, w_freq=0.5, w_omit=0.3, decay=0.97):
+    """计算红球/蓝球基础得分（频率项 + 遗漏项，不含随机扰动）。
 
-    加权模型（归一化后线性组合）：
-      1. 频率项  w_freq  —— 时间衰减加权频率（近期开出权重更高）
-      2. 遗漏项  w_omit  —— 遗漏值越大权重越高（"补出"倾向）
-      3. 随机项  w_rand  —— 均匀随机扰动，避免完全机械选号
-
-    说明：彩票每期独立随机，本模型仅为常见选号策略的量化实现。
+    随机项与权重抽样在 score_weights / 前端中处理；
+    基础得分会导出到 static/data/weights.json 供纯静态页面复用。
     """
     n = len(draws)
     red_w = {i: 0.0 for i in range(RED_MIN, RED_MAX + 1)}
@@ -190,13 +224,24 @@ def score_weights(draws, w_freq=0.5, w_omit=0.3, w_rand=0.2, decay=0.97):
     red_w_n, blue_w_n = normalize(red_w), normalize(blue_w)
     red_o_n, blue_o_n = normalize(red_omit), normalize(blue_omit)
 
-    red_final, blue_final = {}, {}
-    for i in red_w_n:
-        jitter = random.random()
-        red_final[i] = w_freq * red_w_n[i] + w_omit * red_o_n[i] + w_rand * jitter
-    for i in blue_w_n:
-        jitter = random.random()
-        blue_final[i] = w_freq * blue_w_n[i] + w_omit * blue_o_n[i] + w_rand * jitter
+    red_base = {i: w_freq * red_w_n[i] + w_omit * red_o_n[i] for i in red_w_n}
+    blue_base = {i: w_freq * blue_w_n[i] + w_omit * blue_o_n[i] for i in blue_w_n}
+    return red_base, blue_base
+
+
+def score_weights(draws, w_freq=0.5, w_omit=0.3, w_rand=0.2, decay=0.97):
+    """计算红球/蓝球权重（在基础得分上加入随机扰动项）。
+
+    加权模型（归一化后线性组合）：
+      1. 频率项  w_freq  —— 时间衰减加权频率（近期开出权重更高）
+      2. 遗漏项  w_omit  —— 遗漏值越大权重越高（"补出"倾向）
+      3. 随机项  w_rand  —— 均匀随机扰动，避免完全机械选号
+
+    说明：彩票每期独立随机，本模型仅为常见选号策略的量化实现。
+    """
+    red_base, blue_base = base_scores(draws, w_freq, w_omit, decay)
+    red_final = {i: s + w_rand * random.random() for i, s in red_base.items()}
+    blue_final = {i: s + w_rand * random.random() for i, s in blue_base.items()}
     return red_final, blue_final
 
 

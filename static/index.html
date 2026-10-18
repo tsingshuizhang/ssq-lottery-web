@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>双色球 · 历史数据分析与号码推荐</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="site-header">
@@ -88,10 +88,12 @@
     <!-- 最近开奖 -->
     <section class="panel">
       <h2>最近 10 期开奖</h2>
-      <table class="recent">
-        <thead><tr><th>期号</th><th>开奖日期</th><th>红球</th><th>蓝球</th></tr></thead>
-        <tbody id="recentBody"></tbody>
-      </table>
+      <div class="table-wrap">
+        <table class="recent">
+          <thead><tr><th>期号</th><th>开奖日期</th><th>红球</th><th>蓝球</th></tr></thead>
+          <tbody id="recentBody"></tbody>
+        </table>
+      </div>
     </section>
   </main>
 
@@ -99,6 +101,6 @@
     <p>⚠️ 每期开奖均为独立随机事件，历史数据不影响未来结果。本页面仅供娱乐参考，不构成投注建议，请理性购彩。</p>
   </footer>
 
-  <script src="/static/app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

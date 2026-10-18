@@ -1,4 +1,4 @@
-/* 双色球 Web —— 样式表 */
+/* 双色球 Web —— 样式表（响应式：手机竖屏/横屏、高分屏自适应） */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
@@ -13,62 +13,60 @@
   --border: #e6e6e6;
 }
 
+html { -webkit-text-size-adjust: 100%; }
+
 body {
   font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
   background: var(--bg);
   color: var(--text);
   line-height: 1.6;
+  /* 防止小屏横向溢出 */
+  overflow-x: hidden;
+  word-break: break-word;
 }
 
-.wrap { max-width: 960px; margin: 0 auto; padding: 0 16px; }
+.wrap { max-width: 960px; margin: 0 auto; padding: 0 12px; }
 
 /* ---------- 头部 ---------- */
 .site-header {
   background: linear-gradient(135deg, #c4000f 0%, #e60012 55%, #ff5f45 100%);
   color: #fff;
-  padding: 28px 0 24px;
+  padding: clamp(16px, 4vw, 28px) 0 clamp(14px, 3.5vw, 24px);
   box-shadow: 0 2px 10px rgba(230, 0, 18, .25);
 }
-.site-header h1 { font-size: 24px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.subtitle { opacity: .9; margin-top: 6px; font-size: 14px; }
+.site-header h1 {
+  font-size: clamp(17px, 5vw, 24px);
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.subtitle { opacity: .9; margin-top: 6px; font-size: clamp(11px, 3.2vw, 14px); }
 
-/* ---------- 球 ---------- */
+/* ---------- 球（流式尺寸，适配各种分辨率） ---------- */
 .ball {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 34px; height: 34px; border-radius: 50%;
-  color: #fff; font-weight: 700; font-size: 15px;
+  width: clamp(26px, 8vw, 34px);
+  height: clamp(26px, 8vw, 34px);
+  border-radius: 50%;
+  color: #fff; font-weight: 700;
+  font-size: clamp(12px, 3.6vw, 15px);
+  flex: 0 0 auto;
   box-shadow: inset -3px -4px 6px rgba(0,0,0,.25), 0 2px 4px rgba(0,0,0,.15);
-  margin-right: 5px;
+  margin-right: 4px;
 }
 .ball.red    { background: radial-gradient(circle at 32% 30%, #ff7a6e, var(--red) 65%, var(--red-dark)); }
 .ball.blue   { background: radial-gradient(circle at 32% 30%, #6ea0ff, var(--blue) 65%, var(--blue-dark)); }
-.ball.demo   { width: 30px; height: 30px; font-size: 14px; }
-.ball.small  { width: 28px; height: 28px; font-size: 13px; margin-right: 3px; }
-.ball.heat-red  { background: radial-gradient(circle at 32% 30%, var(--c1), var(--c2) 70%); }
-.ball.heat-blue { background: radial-gradient(circle at 32% 30%, var(--c1), var(--c2) 70%); }
-
-/* ---------- 面板 ---------- */
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px;
-  margin-top: 18px;
-  box-shadow: 0 1px 4px rgba(0,0,0,.05);
-}
-.panel h2 { font-size: 18px; margin-bottom: 12px; }
-.panel h2 small { font-size: 12px; color: var(--muted); font-weight: 400; }
-.panel h3 { font-size: 15px; margin: 12px 0 8px; }
+.ball.demo   { width: clamp(22px, 6.5vw, 30px); height: clamp(22px, 6.5vw, 30px); font-size: clamp(11px, 3.2vw, 14px); }
+.ball.small  { width: clamp(20px, 6vw, 28px); height: clamp(20px, 6vw, 28px); font-size: clamp(10px, 2.8vw, 13px); margin-right: 3px; }
+.ball.heat-red, .ball.heat-blue { background: radial-gradient(circle at 32% 30%, var(--c1), var(--c2) 70%); }
 
 /* ---------- 祝贺横幅 ---------- */
 .congrats-banner {
-  margin-top: 18px;
-  padding: 22px 20px;
+  margin-top: 14px;
+  padding: clamp(12px, 3vw, 22px) 12px;
   border-radius: 14px;
   text-align: center;
-  font-size: 30px;
+  font-size: clamp(15px, 4.8vw, 30px);
   font-weight: 900;
-  letter-spacing: 2px;
+  letter-spacing: clamp(0px, .5vw, 2px);
   color: #fff;
   background: linear-gradient(90deg, #c4000f, #e60012 30%, #ff8c00 55%, #e60012 80%, #c4000f);
   background-size: 200% 100%;
@@ -77,17 +75,13 @@ body {
   animation: bannerFlow 4s linear infinite, bannerPulse 1.6s ease-in-out infinite;
 }
 .congrats-tip {
-  margin-top: 10px;
-  font-size: 13px;
+  margin-top: 8px;
+  font-size: clamp(10px, 2.8vw, 13px);
   font-weight: 700;
   letter-spacing: 0;
   color: #cfe0ff;
   opacity: .95;
   text-shadow: 0 1px 3px rgba(0, 0, 0, .4);
-}
-@media (max-width: 600px) {
-  .congrats-banner { font-size: 20px; }
-  .congrats-tip { font-size: 11px; }
 }
 @keyframes bannerFlow {
   0%   { background-position: 0% 0; }
@@ -97,69 +91,117 @@ body {
   0%, 100% { transform: scale(1); }
   50%      { transform: scale(1.02); }
 }
-@media (max-width: 600px) {
-  .congrats-banner { font-size: 16px; }
+
+/* ---------- 面板 ---------- */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: clamp(12px, 3vw, 20px);
+  margin-top: 14px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.05);
 }
+.panel h2 { font-size: clamp(15px, 4.2vw, 18px); margin-bottom: 12px; }
+.panel h2 small { font-size: 12px; color: var(--muted); font-weight: 400; }
+.panel h3 { font-size: clamp(13px, 3.6vw, 15px); margin: 12px 0 8px; }
 
 /* ---------- 控制区 ---------- */
-.controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .controls label { font-size: 14px; color: #555; }
 .controls select {
   margin-left: 6px; padding: 6px 10px; border: 1px solid var(--border);
   border-radius: 8px; font-size: 14px; background: #fff;
+  max-width: 45vw;
 }
 .btn {
-  border: none; border-radius: 8px; padding: 9px 18px;
-  font-size: 14px; cursor: pointer; transition: .15s;
+  border: none; border-radius: 8px; padding: 9px 16px;
+  font-size: clamp(12px, 3.4vw, 14px); cursor: pointer; transition: .15s;
 }
 .btn.primary { background: var(--red); color: #fff; }
 .btn.primary:hover { background: var(--red-dark); }
 .btn.ghost { background: #fff; color: var(--blue); border: 1px solid var(--blue); }
 .btn.ghost:hover { background: #eef3fc; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
-.status { font-size: 13px; color: var(--muted); }
+.status { font-size: 12px; color: var(--muted); }
 
 /* ---------- 推荐 ---------- */
 .picks { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
 .pick {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px; border-radius: 10px; background: #fafafa;
+  display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; row-gap: 6px;
+  padding: clamp(8px, 2.4vw, 10px) 10px; border-radius: 10px; background: #fafafa;
   border: 1px solid var(--border);
 }
-.pick .idx { color: var(--muted); font-size: 13px; width: 28px; }
+.pick .idx { color: var(--muted); font-size: 12px; width: 22px; flex: 0 0 auto; }
 .pick .plus { color: var(--muted); margin: 0 2px; }
 
 /* ---------- 统计卡片 ---------- */
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
-.card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
-.card h3 { font-size: 14px; margin: 0 0 8px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.card { border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+.card h3 { font-size: 13px; margin: 0 0 8px; }
 .red-text  { color: var(--red); }
 .blue-text { color: var(--blue); }
-.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tags { display: flex; flex-wrap: wrap; gap: 5px; }
 .tag {
-  font-size: 13px; padding: 2px 8px; border-radius: 20px; background: #f1f1f1;
+  font-size: clamp(11px, 3vw, 13px); padding: 2px 7px; border-radius: 20px; background: #f1f1f1;
 }
 .tag.hot  { background: #ffe9e7; color: var(--red); }
 .tag.cold { background: #e7efff; color: var(--blue); }
 
 /* ---------- 遗漏 / 奇偶 ---------- */
 .omit div { margin: 4px 0; font-size: 14px; }
-.omit .tag { margin-right: 4px; }
+.omit .tag { margin: 2px 4px 2px 0; display: inline-block; }
 .bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; }
-.bar span { display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; }
+.bar span {
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 11px; white-space: nowrap; overflow: hidden;
+}
 .bar .b-odd  { background: var(--red); }
 .bar .b-even { background: var(--blue); }
 .bar .b-balance { background: #909090; }
 .legend { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
 /* ---------- 热力图 ---------- */
-.grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.grid { display: flex; flex-wrap: wrap; gap: clamp(5px, 1.6vw, 8px); }
 
-/* ---------- 最近开奖 ---------- */
-table.recent { width: 100%; border-collapse: collapse; font-size: 14px; }
-table.recent th, table.recent td { padding: 8px 6px; text-align: left; border-bottom: 1px solid var(--border); }
-table.recent th { color: var(--muted); font-weight: 500; font-size: 13px; }
+/* ---------- 最近开奖（小屏可横滑） ---------- */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.recent { width: 100%; border-collapse: collapse; font-size: clamp(12px, 3.2vw, 14px); min-width: 420px; }
+table.recent th, table.recent td { padding: 8px 6px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.recent th { color: var(--muted); font-weight: 500; font-size: 12px; }
 table.recent td:first-child { color: var(--muted); }
 
 /* ---------- 页脚 ---------- */
-.site-footer { text-align: center; color: var(--muted); font-size: 12px; padding: 24px 16px 32px; }
+.site-footer { text-align: center; color: var(--muted); font-size: 12px; padding: 20px 12px 28px; }
+
+/* ---------- 小屏手机（竖屏窄屏） ---------- */
+@media (max-width: 480px) {
+  .controls { gap: 8px; }
+  .btn { padding: 8px 12px; }
+  .cards { grid-template-columns: 1fr 1fr; }
+  .omit div { font-size: 13px; }
+}
+
+/* 更窄的设备（如 iPhone SE 竖屏 320px 也安全，clamp 已覆盖） */
+
+/* ---------- 手机横屏 / 矮屏（高度不足时压缩纵向空间） ---------- */
+@media (orientation: landscape) and (max-height: 540px) {
+  .site-header { padding: 8px 0; }
+  .site-header h1 { font-size: 16px; }
+  .subtitle { margin-top: 2px; }
+  .congrats-banner {
+    margin-top: 8px;
+    padding: 6px 10px;
+    font-size: clamp(12px, 3.2vw, 18px);
+    animation: bannerFlow 4s linear infinite; /* 横屏关闭脉冲，节省空间 */
+  }
+  .congrats-tip { margin-top: 3px; font-size: 10px; }
+  .panel { padding: 10px 12px; margin-top: 10px; }
+  .ball { width: clamp(22px, 5vh, 30px); height: clamp(22px, 5vh, 30px); font-size: clamp(11px, 2.8vh, 13px); }
+}
+
+/* ---------- 触屏优化 ---------- */
+@media (pointer: coarse) {
+  .btn { padding: 10px 16px; }         /* 增大可点击区域 */
+  .controls select { padding: 8px 10px; }
+}

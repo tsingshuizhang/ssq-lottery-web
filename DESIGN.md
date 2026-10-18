@@ -290,9 +290,17 @@ python3 ssq.py --update 300       # 拉取最近 300 期数据
 - **触发时机**：`cron: "50 13 * * 0,2,4"`（UTC）＝ 北京时间每周二、四、日 21:50，
   晚于 21:15 的开奖时间；另支持 `workflow_dispatch` 手动触发；
 - **执行步骤**：checkout → setup-python → `python tools/update_data.py`
-  （拉取最近 200 期 → 合并去重 → 重写 `ssq_data.json` → 重新生成全部静态文件）
+  （拉取最新数据 → 合并去重 → 重写 `ssq_data.json` → 重新生成全部静态文件）
   → 有变更则自动 `git commit && git push`（提交信息带 `[skip ci]` 防止循环触发）；
-- **权限**：`permissions: contents: write`（使用 GITHUB_TOKEN 推送）。
+- **权限**：`permissions: contents: write`（使用 GITHUB_TOKEN 推送）；
+- **双数据源回退**：福彩官网对海外/机房 IP 返回 403（网宿云 WAF），GitHub runner
+  无法直连，因此 `update_data` 内置两级数据源：
+  1. **福彩官网 API**（`fetch_cwl`，本地环境主用）；
+  2. **500.com 历史数据页**（`fetch_500`，GBK HTML 解析；注意其使用短期号
+     YY+NNN，函数内部与完整期号自动互转）。
+
+  官网不可用时自动回退 500.com，已用 Actions 实测验证通过；两个源的数据一致性
+  以官网为准并抽样比对过。
 
 ### 10.4 前端双模式适配
 

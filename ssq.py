@@ -82,9 +82,12 @@ def fetch_500(start_issue, end_issue):
     作为福彩官网的备用数据源：官网对海外/机房 IP 返回 403（网宿云 WAF），
     GitHub Actions 的 runner 无法直连，500.com 可正常访问。
     页面行结构：<tr class="t_tr1"> 内依次为 期号、6 个红球、蓝球、……、开奖日期。
+    注意 500.com 使用短期号（YY+NNN，如 26119），本函数对外统一使用完整期号
+    （如 2026119），内部自动转换。
     """
+    to_short = lambda s: str(int(s))[2:]  # 2026119 -> 26119
     url = (f"https://datachart.500.com/ssq/history/newinc/history.php"
-           f"?start={start_issue}&end={end_issue}")
+           f"?start={to_short(start_issue)}&end={to_short(end_issue)}")
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with _open_with_ssl_fallback(req, 30) as resp:
         text = resp.read().decode("gb18030", errors="ignore")
@@ -101,7 +104,7 @@ def fetch_500(start_issue, end_issue):
         except ValueError:
             continue
         date = next((c for c in cells if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", c)), "")
-        draws.append({"issue": cells[idx], "date": date, "red": reds, "blue": blue})
+        draws.append({"issue": "20" + cells[idx], "date": date, "red": reds, "blue": blue})
     if not draws:
         raise RuntimeError("500.com 未解析到任何开奖数据")
     return draws

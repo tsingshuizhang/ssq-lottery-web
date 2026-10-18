@@ -159,12 +159,22 @@ def export_static(draws):
     (STATIC_DIR / "weights.json").write_text(
         json.dumps(weights, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+    info_range = [draws[0]["issue"], draws[-1]["issue"]]
+    info_file = STATIC_DIR / "info.json"
+    generated_at = datetime.now().isoformat(timespec="seconds")
+    if info_file.exists():  # 数据无变化时保留原时间戳，避免 Actions 产生空提交
+        try:
+            old_info = json.loads(info_file.read_text(encoding="utf-8"))
+            if old_info.get("total") == len(draws) and old_info.get("range") == info_range:
+                generated_at = old_info.get("generated_at", generated_at)
+        except (ValueError, OSError):
+            pass
     info = {
         "total": len(draws),
-        "range": [draws[0]["issue"], draws[-1]["issue"]],
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "range": info_range,
+        "generated_at": generated_at,
     }
-    (STATIC_DIR / "info.json").write_text(
+    info_file.write_text(
         json.dumps(info, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     print(f"静态统计文件已生成 → {STATIC_DIR}")

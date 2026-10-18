@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>双色球 · 历史数据分析与号码推荐</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <h1><span class="ball red demo">双</span><span class="ball red demo">色</span><span class="ball blue demo">球</span>
+        历史数据分析与号码推荐</h1>
+      <p class="subtitle" id="dataRange">数据加载中…</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- 祝贺横幅 -->
+    <div class="congrats-banner">
+      🎉 祝你早日中得大奖，1.7亿人民币在向你召唤！！！ 🎉
+      <div class="congrats-tip">小提示：双色球一等奖单注奖金封顶 1000 万元，想中 1.7 亿需倍投或多注，祝好运！🍀</div>
+    </div>
+
+    <!-- 控制区 -->
+    <section class="panel controls">
+      <label>统计窗口
+        <select id="window">
+          <option value="20">最近 20 期</option>
+          <option value="30" selected>最近 30 期</option>
+          <option value="50">最近 50 期</option>
+          <option value="100">最近 100 期</option>
+        </select>
+      </label>
+      <button id="btnRecommend" class="btn primary">🎲 生成 10 组推荐号码</button>
+      <button id="btnUpdate" class="btn ghost">🔄 更新开奖数据</button>
+      <span id="status" class="status"></span>
+    </section>
+
+    <!-- 推荐结果 -->
+    <section class="panel" id="recSection" hidden>
+      <h2>推荐号码 <small>（加权概率模型：频率 50% + 遗漏 30% + 随机 20%）</small></h2>
+      <div id="picks" class="picks"></div>
+    </section>
+
+    <!-- 统计分析 -->
+    <section class="panel">
+      <h2>冷热号统计 <small id="windowLabel"></small></h2>
+      <div class="cards">
+        <div class="card">
+          <h3 class="red-text">🔥 红球热号 TOP8</h3>
+          <div class="tags" id="hotRed"></div>
+        </div>
+        <div class="card">
+          <h3 class="blue-text">❄️ 红球冷号 TOP8</h3>
+          <div class="tags" id="coldRed"></div>
+        </div>
+        <div class="card">
+          <h3 class="blue-text">🔥 蓝球热号 TOP5</h3>
+          <div class="tags" id="hotBlue"></div>
+        </div>
+        <div class="card">
+          <h3 class="blue-text">❄️ 蓝球冷号 TOP5</h3>
+          <div class="tags" id="coldBlue"></div>
+        </div>
+      </div>
+
+      <h3>当前最大遗漏</h3>
+      <div class="omit">
+        <div><strong class="red-text">红球：</strong><span id="omitRed"></span></div>
+        <div><strong class="blue-text">蓝球：</strong><span id="omitBlue"></span></div>
+      </div>
+
+      <h3>奇偶分布</h3>
+      <div class="bar" id="oddEvenBar"></div>
+      <p class="legend" id="oddEvenLegend"></p>
+    </section>
+
+    <!-- 号码频率热力图 -->
+    <section class="panel">
+      <h2>号码频率热力图 <small>（颜色越深出现越多）</small></h2>
+      <h3 class="red-text">红球 1 - 33</h3>
+      <div class="grid" id="redGrid"></div>
+      <h3 class="blue-text" style="margin-top:16px">蓝球 1 - 16</h3>
+      <div class="grid" id="blueGrid"></div>
+    </section>
+
+    <!-- 最近开奖 -->
+    <section class="panel">
+      <h2>最近 10 期开奖</h2>
+      <table class="recent">
+        <thead><tr><th>期号</th><th>开奖日期</th><th>红球</th><th>蓝球</th></tr></thead>
+        <tbody id="recentBody"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>⚠️ 每期开奖均为独立随机事件，历史数据不影响未来结果。本页面仅供娱乐参考，不构成投注建议，请理性购彩。</p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

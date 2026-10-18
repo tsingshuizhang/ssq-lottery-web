@@ -17,6 +17,7 @@
 import argparse
 import json
 import random
+import re
 import ssl
 import sys
 import urllib.request
@@ -45,33 +46,85 @@ def load_data():
     return draws
 
 
-def update_data(count=100):
-    """从官方接口拉取最近 count 期数据并合并保存。"""
-    url = API_URL.format(count=count)
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+def _open_with_ssl_fallback(req, timeout):
+    """打开 URL；证书校验失败（代理环境）时降级为不校验重试。"""
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            raw = resp.read().decode("utf-8")
+        return urllib.request.urlopen(req, timeout=timeout)
     except (ssl.SSLError, urllib.error.URLError):
-        # 部分网络环境（如代理）证书校验失败，降级为不校验证书重试
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        with urllib.request.urlopen(req, timeout=15, context=ctx) as resp:
-            raw = resp.read().decode("utf-8")
-    payload = json.loads(raw)
-    if payload.get("state") != 0:
-        sys.exit(f"接口返回异常：{payload.get('message')}")
+        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
 
-    old = {d["issue"]: d for d in load_data()}
+
+def fetch_cwl(count):
+    """从中国福彩官网接口拉取最近 count 期数据。"""
+    url = API_URL.format(count=count)
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with _open_with_ssl_fallback(req, 15) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    if payload.get("state") != 0:
+        raise RuntimeError(f"福彩官网接口返回异常：{payload.get('message')}")
+    draws = []
     for item in payload["result"]:
-        red = sorted(int(x) for x in item["red"].split(","))
-        old[item["code"]] = {
+        draws.append({
             "issue": item["code"],
             "date": item["date"].split("(")[0],
-            "red": red,
+            "red": sorted(int(x) for x in item["red"].split(",")),
             "blue": int(item["blue"]),
-        }
+        })
+    return draws
+
+
+def fetch_500(start_issue, end_issue):
+    """从 500.com 历史数据页抓取特定期号范围（GBK 编码 HTML）。
+
+    作为福彩官网的备用数据源：官网对海外/机房 IP 返回 403（网宿云 WAF），
+    GitHub Actions 的 runner 无法直连，500.com 可正常访问。
+    页面行结构：<tr class="t_tr1"> 内依次为 期号、6 个红球、蓝球、……、开奖日期。
+    """
+    url = (f"https://datachart.500.com/ssq/history/newinc/history.php"
+           f"?start={start_issue}&end={end_issue}")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with _open_with_ssl_fallback(req, 30) as resp:
+        text = resp.read().decode("gb18030", errors="ignore")
+    draws = []
+    for row in re.findall(r'<tr class="t_tr1">(.*?)</tr>', text, re.S):
+        cells = [re.sub(r"<[^>]+>", "", c).strip()
+                 for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
+        idx = next((i for i, c in enumerate(cells) if re.fullmatch(r"\d{5,7}", c)), None)
+        if idx is None:
+            continue
+        try:
+            reds = sorted(int(c) for c in cells[idx + 1: idx + 7])
+            blue = int(cells[idx + 7])
+        except ValueError:
+            continue
+        date = next((c for c in cells if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", c)), "")
+        draws.append({"issue": cells[idx], "date": date, "red": reds, "blue": blue})
+    if not draws:
+        raise RuntimeError("500.com 未解析到任何开奖数据")
+    return draws
+
+
+def update_data(count=100):
+    """更新历史数据：优先福彩官网，被拦截时回退 500.com；合并去重并重建静态文件。"""
+    try:
+        fetched = fetch_cwl(count)
+        print(f"数据源：福彩官网（{len(fetched)} 期）")
+    except Exception as exc:
+        print(f"福彩官网获取失败（{exc}），回退 500.com 数据源")
+        old_draws = load_data()
+        latest = int(old_draws[-1]["issue"]) if old_draws else 0
+        # 只需覆盖"已知最新期 → 未来若干期"的增量窗口即可跟上新数据
+        fetched = fetch_500(str(max(latest - 5, 1)), str(latest + 30))
+        print(f"数据源：500.com（{len(fetched)} 期）")
+
+    old = {d["issue"]: d for d in load_data()}
+    for d in fetched:
+        if not d["date"] and d["issue"] in old:
+            d["date"] = old[d["issue"]]["date"]  # 备用源缺失日期时保留已有值
+        old[d["issue"]] = d
     merged = sorted(old.values(), key=lambda d: d["issue"])
     DATA_FILE.write_text(
         json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

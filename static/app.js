@@ -326,12 +326,12 @@ async function copyPicks() {
 /* ---------------- 历史回测（模型 vs 纯随机基线） ---------------- */
 
 /** 读取回测结果（静态文件优先，本地后端兜底） */
-async function fetchBacktest() {
+async function fetchBacktest(win) {
   try {
-    const r = await fetch("data/backtest.json");
+    const r = await fetch(`data/backtest_${win}.json`);
     if (r.ok) return await r.json();
   } catch (e) { /* 静态文件不存在时走后端 */ }
-  const r = await fetch("/api/backtest?window=20");
+  const r = await fetch(`/api/backtest?window=${win}`);
   if (!r.ok) throw new Error("HTTP " + r.status);
   return r.json();
 }
@@ -347,8 +347,9 @@ function pickHtml(pick, actualReds, actualBlue) {
 }
 
 async function loadBacktest() {
+  const win = $("btWindow").value;
   try {
-    const bt = await fetchBacktest();
+    const bt = await fetchBacktest(win);
     const ms = bt.summary.model, rs = bt.summary.random;
     $("btLabel").textContent =
       `（第 ${bt.range[0]} ~ ${bt.range[1]} 期，每期 ${bt.count} 组，模型 vs 随机基线）`;
@@ -376,6 +377,7 @@ $("btnRecommend").addEventListener("click", genPicks);
 $("btnCopy").addEventListener("click", copyPicks);
 $("btnUpdate").addEventListener("click", updateData);
 $("window").addEventListener("change", loadStats);
+$("btWindow").addEventListener("change", loadBacktest);
 
 loadStats();
 loadBacktest();

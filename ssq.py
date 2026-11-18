@@ -202,11 +202,12 @@ def export_static(draws):
     (STATIC_DIR / "weights.json").write_text(
         json.dumps(weights, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    # 历史回测（固定种子、可复现），前端回测面板直接读取
-    bt = backtest(draws, window=min(20, max(1, len(draws) // 5)))
-    (STATIC_DIR / "backtest.json").write_text(
-        json.dumps(bt, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    # 历史回测（固定种子、可复现）：与统计窗口一致，各窗口一份，前端切换零计算
+    for w in WINDOWS:
+        bt = backtest(draws, window=min(w, max(1, len(draws) // 5)))
+        (STATIC_DIR / f"backtest_{w}.json").write_text(
+            json.dumps(bt, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
     info_range = [draws[0]["issue"], draws[-1]["issue"]]
     info_file = STATIC_DIR / "info.json"
     generated_at = datetime.now().isoformat(timespec="seconds")

@@ -208,6 +208,13 @@ table.recent td:first-child { color: var(--muted); }
 }
 
 /* ---------- 历史回测 ---------- */
+.bt-controls { margin: 8px 0 4px; font-size: 13px; color: var(--muted); }
+.bt-controls select {
+  margin-left: 6px; padding: 5px 8px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 13px; background: #fff;
+}
+.bt-scroll { max-height: 440px; overflow-y: auto; }
+.bt-scroll thead th { position: sticky; top: 0; background: #fff; z-index: 1; }
 .bt-num { font-size: clamp(14px, 3.5vw, 18px); color: var(--text); }
 .bt-num b { font-size: clamp(22px, 5vw, 30px); color: var(--red); }
 .bt-num small { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }

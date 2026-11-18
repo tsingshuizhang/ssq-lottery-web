@@ -103,6 +103,16 @@
     <section class="panel">
       <h2>历史回测 <small id="btLabel">（模型 vs 纯随机基线）</small></h2>
       <p class="legend">每期仅用该期<b>之前</b>的数据训练并推荐 10 组，对比实际开奖（取命中最好的一注）；随机基线为等量纯随机号码。种子固定，结果可复现。</p>
+      <div class="bt-controls">
+        <label>回测窗口
+          <select id="btWindow">
+            <option value="20" selected>最近 20 期</option>
+            <option value="30">最近 30 期</option>
+            <option value="50">最近 50 期</option>
+            <option value="100">最近 100 期</option>
+          </select>
+        </label>
+      </div>
       <div class="cards">
         <div class="card bt-card">
           <h3 class="red-text">🎯 红球平均命中</h3>
@@ -117,7 +127,7 @@
           <div class="bt-num" id="btBlue">–</div>
         </div>
       </div>
-      <div class="table-wrap">
+      <div class="table-wrap bt-scroll">
         <table class="recent bt-table">
           <thead><tr><th>期号</th><th>实际开奖</th><th>模型最佳一注</th><th>命中</th></tr></thead>
           <tbody id="btBody"></tbody>

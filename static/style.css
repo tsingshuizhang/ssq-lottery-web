@@ -219,10 +219,5 @@ table.recent td:first-child { color: var(--muted); }
 .bt-num b { font-size: clamp(22px, 5vw, 30px); color: var(--red); }
 .bt-num small { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
 .bt-card { text-align: center; }
-.bt-table td:nth-child(4) { white-space: nowrap; }
-
-/* 命中高亮：金色描边 + 发光 */
-.ball.hit {
-  box-shadow: 0 0 0 2px #f5c518, 0 0 8px rgba(245, 197, 24, .65);
-  font-weight: 800;
-}
+.bt-table td:nth-child(3), .bt-table td:nth-child(4) { white-space: nowrap; }
+.bt-table td small { color: var(--muted); font-size: 11px; }

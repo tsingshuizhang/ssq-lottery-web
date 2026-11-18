@@ -102,7 +102,7 @@
     <!-- 历史回测 -->
     <section class="panel">
       <h2>历史回测 <small id="btLabel">（模型 vs 纯随机基线）</small></h2>
-      <p class="legend">每期仅用该期<b>之前</b>的数据训练并推荐 10 组，对比实际开奖（取命中最好的一注）；随机基线为等量纯随机号码。种子固定，结果可复现。</p>
+      <p class="legend">每期仅用该期<b>之前</b>的数据训练，用 50 个不同种子各推荐 10 组（蒙特卡洛抽样），命中取平均±波动，排除单一种子的运气成分；随机基线为等量纯随机号码。种子固定，结果可复现。</p>
       <div class="bt-controls">
         <label>回测窗口
           <select id="btWindow">
@@ -129,7 +129,7 @@
       </div>
       <div class="table-wrap bt-scroll">
         <table class="recent bt-table">
-          <thead><tr><th>期号</th><th>实际开奖</th><th>模型最佳一注</th><th>命中</th></tr></thead>
+          <thead><tr><th>期号</th><th>实际开奖</th><th>模型平均命中</th><th>随机平均命中</th></tr></thead>
           <tbody id="btBody"></tbody>
         </table>
       </div>

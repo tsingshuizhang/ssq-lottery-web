@@ -394,13 +394,8 @@ def structurally_sane(reds):
     return True
 
 
-def recommend(draws, count=10, max_attempts=500, w_rand=0.2):
-    """生成 count 组推荐号码（红球组合不重复）。
-
-    每组抽取前都在基础得分上重新加入随机扰动，避免 10 组共用同一权重池
-    导致组间号码高度雷同。
-    """
-    red_base, blue_base = base_scores(draws)
+def _recommend_from_base(red_base, blue_base, count, w_rand=0.2, max_attempts=500):
+    """在已算好的基础得分上生成 count 组推荐（回测蒙特卡洛抽样的内层循环）。"""
     picks, seen = [], set()
     attempts = 0
     while len(picks) < count and attempts < max_attempts * count:
@@ -418,15 +413,27 @@ def recommend(draws, count=10, max_attempts=500, w_rand=0.2):
     return picks
 
 
+def recommend(draws, count=10, max_attempts=500, w_rand=0.2):
+    """生成 count 组推荐号码（红球组合不重复）。
+
+    每组抽取前都在基础得分上重新加入随机扰动，避免 10 组共用同一权重池
+    导致组间号码高度雷同。
+    """
+    red_base, blue_base = base_scores(draws)
+    return _recommend_from_base(red_base, blue_base, count, w_rand, max_attempts)
+
+
 # ---------------------------------------------------------------- 历史回测
 
-def backtest(draws, window=20, count=10, seed=42):
-    """历史回测：对最近 window 期，逐期用"该期之前的数据"训练并生成 count 组
-    推荐，与实际开奖对比命中情况；同时生成等量纯随机号码作为基线。
+def backtest(draws, window=20, count=10, trials=50, seed=42):
+    """蒙特卡洛历史回测：对最近 window 期，逐期用"该期之前的数据"训练，
+    用 trials 个不同种子各生成 count 组推荐，命中取统计均值；
+    纯随机基线同口径对照。所有种子固定（seed + 期号 + 试验序号），
+    结果完全可复现，且不受单一种子的运气成分影响。
 
-    每期推荐以固定种子生成（seed + 期号），结果完全可复现。
-    评估口径：每期取"命中最好的一注"（先比红球命中数，再比蓝球是否命中），
+    评估口径：每次试验取"命中最好的一注"（先比红球命中数，再比蓝球是否命中），
     模拟"按推荐买 count 注，看中得最好的一注"；另统计蓝球在 count 注中的命中率。
+    每期输出 trials 次试验的均值与标准差。
 
     返回 {"draws": [逐期明细], "summary": {"model"/"random": 汇总指标}}。
     """
@@ -436,72 +443,81 @@ def backtest(draws, window=20, count=10, seed=42):
     for i in range(len(draws) - window, len(draws)):
         train, actual = draws[:i], draws[i]
         a_red, a_blue = set(actual["red"]), actual["blue"]
+        # 基础得分只与训练数据有关，每期算一次，各次试验仅随机项不同
+        red_base, blue_base = base_scores(train)
 
-        random.seed(f"model-{seed}-{actual['issue']}")
-        model_picks = recommend(train, count=count)
-
-        random.seed(f"rand-{seed}-{actual['issue']}")
-        rand_picks = [
-            (sorted(random.sample(range(RED_MIN, RED_MAX + 1), RED_COUNT)),
-             random.randint(BLUE_MIN, BLUE_MAX))
-            for _ in range(count)
-        ]
-
-        def best_of(picks):
-            best = max(picks, key=lambda p: (len(set(p[0]) & a_red), p[1] == a_blue))
+        def run_trials(kind):
+            hits, blue_anys = [], []
+            for t in range(trials):
+                random.seed(f"{kind}-{seed}-{actual['issue']}-{t}")
+                if kind == "model":
+                    picks = _recommend_from_base(red_base, blue_base, count)
+                else:
+                    picks = [
+                        (sorted(random.sample(range(RED_MIN, RED_MAX + 1), RED_COUNT)),
+                         random.randint(BLUE_MIN, BLUE_MAX))
+                        for _ in range(count)
+                    ]
+                best = max(picks, key=lambda p: (len(set(p[0]) & a_red), p[1] == a_blue))
+                hits.append(len(set(best[0]) & a_red))
+                blue_anys.append(any(p[1] == a_blue for p in picks))
+            avg = sum(hits) / len(hits)
+            var = sum((h - avg) ** 2 for h in hits) / len(hits)
             return {
-                "reds": list(best[0]), "blue": best[1],
-                "red_hits": len(set(best[0]) & a_red),
-                "blue_hit": best[1] == a_blue,
+                "avg_red_hits": round(avg, 2),
+                "std_red_hits": round(var ** 0.5, 2),
+                "max_red_hits": max(hits),
+                "blue_any_rate": round(sum(blue_anys) / len(blue_anys), 2),
             }
 
         records.append({
             "issue": actual["issue"], "date": actual["date"],
             "actual": {"red": actual["red"], "blue": a_blue},
-            "model": best_of(model_picks),
-            "random": best_of(rand_picks),
-            "model_blue_any": any(p[1] == a_blue for p in model_picks),
-            "random_blue_any": any(p[1] == a_blue for p in rand_picks),
+            "model": run_trials("model"),
+            "random": run_trials("random"),
         })
 
     def summarize(key):
-        hits = [r[key]["red_hits"] for r in records]
+        avgs = [r[key]["avg_red_hits"] for r in records]
         return {
-            "avg_red_hits": round(sum(hits) / len(hits), 2),
-            "max_red_hits": max(hits),
+            "avg_red_hits": round(sum(avgs) / len(avgs), 2),
+            "std_red_hits": round(
+                sum(r[key]["std_red_hits"] for r in records) / len(records), 2),
+            "max_red_hits": max(r[key]["max_red_hits"] for r in records),
             "blue_any_rate": round(
-                sum(r[f"{key}_blue_any"] for r in records) / len(records), 2),
-            "dist": {str(k): hits.count(k) for k in range(RED_COUNT + 1) if hits.count(k)},
+                sum(r[key]["blue_any_rate"] for r in records) / len(records), 2),
         }
 
     return {
-        "window": window, "count": count,
+        "window": window, "count": count, "trials": trials,
         "range": [records[0]["issue"], records[-1]["issue"]],
         "draws": records,
         "summary": {"model": summarize("model"), "random": summarize("random")},
     }
 
 
-def show_backtest(draws, window=20, count=10):
-    """打印历史回测结果（模型 vs 纯随机基线）。"""
-    bt = backtest(draws, window=window, count=count)
+def show_backtest(draws, window=20, count=10, trials=50):
+    """打印蒙特卡洛历史回测结果（模型 vs 纯随机基线）。"""
+    bt = backtest(draws, window=window, count=count, trials=trials)
     ms, rs = bt["summary"]["model"], bt["summary"]["random"]
-    print(f"\n{'='*76}")
-    print(f" 历史回测：最近 {bt['window']} 期（{bt['range'][0]} ~ {bt['range'][1]}），每期推荐 {bt['count']} 组")
-    print(f"{'='*76}")
-    print(f" {'期号':<9} {'实际开奖':<32} {'模型最佳一注':<28} {'命中'}")
-    print("-" * 76)
+    print(f"\n{'='*80}")
+    print(f" 历史回测：最近 {bt['window']} 期（{bt['range'][0]} ~ {bt['range'][1]}）"
+          f"，每期 {bt['trials']} 次抽样 × {bt['count']} 组")
+    print(f"{'='*80}")
+    print(f" {'期号':<9} {'实际开奖':<28} {'模型（均值±波动, 蓝率）':<26} {'随机（均值±波动, 蓝率）'}")
+    print("-" * 80)
     for r in bt["draws"]:
         actual = " ".join(f"{n:02d}" for n in r["actual"]["red"]) + f" + {r['actual']['blue']:02d}"
-        m = r["model"]
-        pick = " ".join(f"{n:02d}" for n in m["reds"]) + f" + {m['blue']:02d}"
-        hit = f"{m['red_hits']}红" + ("+蓝" if m["blue_hit"] else "")
-        print(f" {r['issue']:<9} {actual:<32} {pick:<28} {hit}")
-    print("-" * 76)
-    print(f" 红球平均命中（每期最佳一注）：模型 {ms['avg_red_hits']} 个  vs  随机 {rs['avg_red_hits']} 个")
+        m, rd = r["model"], r["random"]
+        m_txt = f"{m['avg_red_hits']:.1f}红±{m['std_red_hits']:.1f} 蓝{m['blue_any_rate']:.0%}"
+        r_txt = f"{rd['avg_red_hits']:.1f}红±{rd['std_red_hits']:.1f} 蓝{rd['blue_any_rate']:.0%}"
+        print(f" {r['issue']:<9} {actual:<28} {m_txt:<26} {r_txt}")
+    print("-" * 80)
+    print(f" 红球平均命中（每期最佳一注的抽样均值）：模型 {ms['avg_red_hits']}±{ms['std_red_hits']}  vs  随机 {rs['avg_red_hits']}±{rs['std_red_hits']}")
     print(f" 红球单场最高命中：模型 {ms['max_red_hits']} 个  vs  随机 {rs['max_red_hits']} 个")
-    print(f" 蓝球命中率（{bt['count']} 组内任一命中）：模型 {ms['blue_any_rate']:.0%}  vs  随机 {rs['blue_any_rate']:.0%}")
-    print("\n* 回测每期只用该期之前的数据训练，种子固定、结果可复现；")
+    print(f" 蓝球命中率（{bt['count']} 组内任一命中的试验占比）：模型 {ms['blue_any_rate']:.0%}  vs  随机 {rs['blue_any_rate']:.0%}")
+    print(f"\n* 每期只用该期之前的数据训练；每期 {bt['trials']} 个不同种子各推荐 {bt['count']} 组取平均，")
+    print("  排除单一种子的运气成分；所有种子固定，结果可复现。")
     print("  模型若优于随机基线不代表未来有效——历史命中好可能是过拟合或运气。")
     return bt
 
@@ -516,6 +532,8 @@ def main():
     parser.add_argument("--seed", type=int, default=None, help="随机种子（固定后推荐结果可复现）")
     parser.add_argument("-b", "--backtest", type=int, metavar="N", nargs="?", const=20,
                         help="历史回测最近 N 期（默认 20）：模型 vs 纯随机基线")
+    parser.add_argument("--trials", type=int, default=50,
+                        help="回测每期的蒙特卡洛抽样次数（默认 50）")
     parser.add_argument("-u", "--update", type=int, metavar="N", nargs="?", const=100,
                         help="从官方接口更新最近 N 期数据（默认 100）")
     args = parser.parse_args()
@@ -531,7 +549,7 @@ def main():
     print(f"已加载 {len(draws)} 期历史数据（{draws[0]['issue']} ~ {draws[-1]['issue']}）")
 
     if args.backtest:
-        show_backtest(draws, window=args.backtest, count=args.count)
+        show_backtest(draws, window=args.backtest, count=args.count, trials=args.trials)
         return
 
     show_stats(draws, args.window)

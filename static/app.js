@@ -323,9 +323,59 @@ async function copyPicks() {
   $("status").textContent = "✅ 已复制 10 组号码到剪贴板";
 }
 
+/* ---------------- 历史回测（模型 vs 纯随机基线） ---------------- */
+
+/** 读取回测结果（静态文件优先，本地后端兜底） */
+async function fetchBacktest() {
+  try {
+    const r = await fetch("data/backtest.json");
+    if (r.ok) return await r.json();
+  } catch (e) { /* 静态文件不存在时走后端 */ }
+  const r = await fetch("/api/backtest?window=20");
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+/** 渲染一注号码，命中实际开奖的号码高亮 */
+function pickHtml(pick, actualReds, actualBlue) {
+  const reds = pick.reds.map((n) => {
+    const hit = actualReds.includes(Number(n)) ? " hit" : "";
+    return `<span class="ball small red${hit}">${pad(n)}</span>`;
+  }).join("");
+  const blueHit = Number(pick.blue) === Number(actualBlue) ? " hit" : "";
+  return `${reds}<span class="ball small blue${blueHit}">${pad(pick.blue)}</span>`;
+}
+
+async function loadBacktest() {
+  try {
+    const bt = await fetchBacktest();
+    const ms = bt.summary.model, rs = bt.summary.random;
+    $("btLabel").textContent =
+      `（第 ${bt.range[0]} ~ ${bt.range[1]} 期，每期 ${bt.count} 组，模型 vs 随机基线）`;
+    $("btAvg").innerHTML = `模型 <b>${ms.avg_red_hits}</b> 个<small> vs 随机 ${rs.avg_red_hits} 个</small>`;
+    $("btMax").innerHTML = `模型 <b>${ms.max_red_hits}</b> 个<small> vs 随机 ${rs.max_red_hits} 个</small>`;
+    $("btBlue").innerHTML = `模型 <b>${Math.round(ms.blue_any_rate * 100)}%</b><small> vs 随机 ${Math.round(rs.blue_any_rate * 100)}%</small>`;
+
+    const tbody = $("btBody");
+    tbody.innerHTML = "";
+    [...bt.draws].reverse().forEach((r) => {
+      const tr = document.createElement("tr");
+      const actual = r.actual.red.map((n) => `<span class="ball small red">${pad(n)}</span>`).join("") +
+        `<span class="ball small blue">${pad(r.actual.blue)}</span>`;
+      const m = r.model;
+      const hit = `${m.red_hits}红` + (m.blue_hit ? "+蓝" : "");
+      tr.innerHTML = `<td>${r.issue}</td><td>${actual}</td>` +
+        `<td>${pickHtml(m, r.actual.red, r.actual.blue)}</td>` +
+        `<td><span class="tag ${m.red_hits >= 3 ? "hot" : "cold"}">${hit}</span></td>`;
+      tbody.appendChild(tr);
+    });
+  } catch (e) { /* 回测数据不可用时静默（不影响主功能） */ }
+}
+
 $("btnRecommend").addEventListener("click", genPicks);
 $("btnCopy").addEventListener("click", copyPicks);
 $("btnUpdate").addEventListener("click", updateData);
 $("window").addEventListener("change", loadStats);
 
 loadStats();
+loadBacktest();

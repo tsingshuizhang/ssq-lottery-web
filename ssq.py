@@ -202,6 +202,11 @@ def export_static(draws):
     (STATIC_DIR / "weights.json").write_text(
         json.dumps(weights, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+    # 历史回测（固定种子、可复现），前端回测面板直接读取
+    bt = backtest(draws, window=min(20, max(1, len(draws) // 5)))
+    (STATIC_DIR / "backtest.json").write_text(
+        json.dumps(bt, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     info_range = [draws[0]["issue"], draws[-1]["issue"]]
     info_file = STATIC_DIR / "info.json"
     generated_at = datetime.now().isoformat(timespec="seconds")
@@ -412,6 +417,94 @@ def recommend(draws, count=10, max_attempts=500, w_rand=0.2):
     return picks
 
 
+# ---------------------------------------------------------------- 历史回测
+
+def backtest(draws, window=20, count=10, seed=42):
+    """历史回测：对最近 window 期，逐期用"该期之前的数据"训练并生成 count 组
+    推荐，与实际开奖对比命中情况；同时生成等量纯随机号码作为基线。
+
+    每期推荐以固定种子生成（seed + 期号），结果完全可复现。
+    评估口径：每期取"命中最好的一注"（先比红球命中数，再比蓝球是否命中），
+    模拟"按推荐买 count 注，看中得最好的一注"；另统计蓝球在 count 注中的命中率。
+
+    返回 {"draws": [逐期明细], "summary": {"model"/"random": 汇总指标}}。
+    """
+    if len(draws) <= window:
+        raise ValueError(f"数据不足：共 {len(draws)} 期，无法回测最近 {window} 期")
+    records = []
+    for i in range(len(draws) - window, len(draws)):
+        train, actual = draws[:i], draws[i]
+        a_red, a_blue = set(actual["red"]), actual["blue"]
+
+        random.seed(f"model-{seed}-{actual['issue']}")
+        model_picks = recommend(train, count=count)
+
+        random.seed(f"rand-{seed}-{actual['issue']}")
+        rand_picks = [
+            (sorted(random.sample(range(RED_MIN, RED_MAX + 1), RED_COUNT)),
+             random.randint(BLUE_MIN, BLUE_MAX))
+            for _ in range(count)
+        ]
+
+        def best_of(picks):
+            best = max(picks, key=lambda p: (len(set(p[0]) & a_red), p[1] == a_blue))
+            return {
+                "reds": list(best[0]), "blue": best[1],
+                "red_hits": len(set(best[0]) & a_red),
+                "blue_hit": best[1] == a_blue,
+            }
+
+        records.append({
+            "issue": actual["issue"], "date": actual["date"],
+            "actual": {"red": actual["red"], "blue": a_blue},
+            "model": best_of(model_picks),
+            "random": best_of(rand_picks),
+            "model_blue_any": any(p[1] == a_blue for p in model_picks),
+            "random_blue_any": any(p[1] == a_blue for p in rand_picks),
+        })
+
+    def summarize(key):
+        hits = [r[key]["red_hits"] for r in records]
+        return {
+            "avg_red_hits": round(sum(hits) / len(hits), 2),
+            "max_red_hits": max(hits),
+            "blue_any_rate": round(
+                sum(r[f"{key}_blue_any"] for r in records) / len(records), 2),
+            "dist": {str(k): hits.count(k) for k in range(RED_COUNT + 1) if hits.count(k)},
+        }
+
+    return {
+        "window": window, "count": count,
+        "range": [records[0]["issue"], records[-1]["issue"]],
+        "draws": records,
+        "summary": {"model": summarize("model"), "random": summarize("random")},
+    }
+
+
+def show_backtest(draws, window=20, count=10):
+    """打印历史回测结果（模型 vs 纯随机基线）。"""
+    bt = backtest(draws, window=window, count=count)
+    ms, rs = bt["summary"]["model"], bt["summary"]["random"]
+    print(f"\n{'='*76}")
+    print(f" 历史回测：最近 {bt['window']} 期（{bt['range'][0]} ~ {bt['range'][1]}），每期推荐 {bt['count']} 组")
+    print(f"{'='*76}")
+    print(f" {'期号':<9} {'实际开奖':<32} {'模型最佳一注':<28} {'命中'}")
+    print("-" * 76)
+    for r in bt["draws"]:
+        actual = " ".join(f"{n:02d}" for n in r["actual"]["red"]) + f" + {r['actual']['blue']:02d}"
+        m = r["model"]
+        pick = " ".join(f"{n:02d}" for n in m["reds"]) + f" + {m['blue']:02d}"
+        hit = f"{m['red_hits']}红" + ("+蓝" if m["blue_hit"] else "")
+        print(f" {r['issue']:<9} {actual:<32} {pick:<28} {hit}")
+    print("-" * 76)
+    print(f" 红球平均命中（每期最佳一注）：模型 {ms['avg_red_hits']} 个  vs  随机 {rs['avg_red_hits']} 个")
+    print(f" 红球单场最高命中：模型 {ms['max_red_hits']} 个  vs  随机 {rs['max_red_hits']} 个")
+    print(f" 蓝球命中率（{bt['count']} 组内任一命中）：模型 {ms['blue_any_rate']:.0%}  vs  随机 {rs['blue_any_rate']:.0%}")
+    print("\n* 回测每期只用该期之前的数据训练，种子固定、结果可复现；")
+    print("  模型若优于随机基线不代表未来有效——历史命中好可能是过拟合或运气。")
+    return bt
+
+
 # ---------------------------------------------------------------- 入口
 
 def main():
@@ -420,6 +513,8 @@ def main():
     parser.add_argument("-w", "--window", type=int, default=30, help="统计窗口期数（默认 30）")
     parser.add_argument("-s", "--stats", action="store_true", help="只显示统计分析，不推荐号码")
     parser.add_argument("--seed", type=int, default=None, help="随机种子（固定后推荐结果可复现）")
+    parser.add_argument("-b", "--backtest", type=int, metavar="N", nargs="?", const=20,
+                        help="历史回测最近 N 期（默认 20）：模型 vs 纯随机基线")
     parser.add_argument("-u", "--update", type=int, metavar="N", nargs="?", const=100,
                         help="从官方接口更新最近 N 期数据（默认 100）")
     args = parser.parse_args()
@@ -433,6 +528,10 @@ def main():
 
     draws = load_data()
     print(f"已加载 {len(draws)} 期历史数据（{draws[0]['issue']} ~ {draws[-1]['issue']}）")
+
+    if args.backtest:
+        show_backtest(draws, window=args.backtest, count=args.count)
+        return
 
     show_stats(draws, args.window)
     if args.stats:

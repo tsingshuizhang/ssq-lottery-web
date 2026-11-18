@@ -22,7 +22,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from ssq import load_data, recommend, stats_dict, update_data
+from ssq import backtest, load_data, recommend, stats_dict, update_data
 
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
@@ -94,6 +94,15 @@ class SSQHandler(BaseHTTPRequestHandler):
                 window = 30
             draws = load_data()
             return self._send_json(stats_dict(draws, window))
+
+        if route == "/api/backtest":
+            try:
+                window = int(query.get("window", ["20"])[0])
+                window = max(5, min(window, 100))
+            except ValueError:
+                window = 20
+            draws = load_data()
+            return self._send_json(backtest(draws, window=window))
 
         if route == "/api/recommend":
             try:

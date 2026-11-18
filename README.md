@@ -34,6 +34,7 @@ python3 ssq_web.py            # 打开 http://127.0.0.1:8000
 # 或命令行模式
 python3 ssq.py                # 分析 + 推荐 10 组号码
 python3 ssq.py --seed 42      # 固定随机种子，结果可复现
+python3 ssq.py --backtest 20  # 历史回测最近 20 期：模型 vs 纯随机基线
 
 # 手动更新数据（会同步重新生成 static/data/ 静态文件）
 python3 tools/update_data.py
@@ -47,6 +48,7 @@ python3 tools/update_data.py
 - 🗺️ 红蓝球频率热力图（悬停查看次数与遗漏）
 - 🎲 加权概率模型一键生成 10 组推荐号码（频率 50% + 遗漏 30% + 随机 20%，逐组独立扰动）
 - 📋 推荐号码一键复制
+- 📈 历史回测：每期仅用之前的数据训练，模型推荐 vs 纯随机基线命中对比（种子固定可复现）
 - 🔄 定时自动更新历史开奖数据（GitHub Actions，双数据源回退 + 跨年增量抓取 + 入库格式校验）
 
 ## 目录结构

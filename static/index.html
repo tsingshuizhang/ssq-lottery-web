@@ -98,6 +98,33 @@
         </table>
       </div>
     </section>
+
+    <!-- 历史回测 -->
+    <section class="panel">
+      <h2>历史回测 <small id="btLabel">（模型 vs 纯随机基线）</small></h2>
+      <p class="legend">每期仅用该期<b>之前</b>的数据训练并推荐 10 组，对比实际开奖（取命中最好的一注）；随机基线为等量纯随机号码。种子固定，结果可复现。</p>
+      <div class="cards">
+        <div class="card bt-card">
+          <h3 class="red-text">🎯 红球平均命中</h3>
+          <div class="bt-num" id="btAvg">–</div>
+        </div>
+        <div class="card bt-card">
+          <h3 class="red-text">🏆 红球单场最高</h3>
+          <div class="bt-num" id="btMax">–</div>
+        </div>
+        <div class="card bt-card">
+          <h3 class="blue-text">🔵 蓝球命中率</h3>
+          <div class="bt-num" id="btBlue">–</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="recent bt-table">
+          <thead><tr><th>期号</th><th>实际开奖</th><th>模型最佳一注</th><th>命中</th></tr></thead>
+          <tbody id="btBody"></tbody>
+        </table>
+      </div>
+      <p class="legend">⚠️ 模型若优于随机基线不代表未来有效——历史命中好可能是过拟合或运气。每期开奖均为独立随机事件。</p>
+    </section>
   </main>
 
   <footer class="site-footer">

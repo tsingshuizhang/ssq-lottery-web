@@ -87,11 +87,24 @@ async function loadStats() {
     renderRecent(s.recent);
 
     $("status").textContent = "";
+    loadDataInfo();
   } catch (err) {
     $("status").innerHTML = "统计数据加载失败：" + err.message +
       "<br>💡 本地运行请使用 <code>python3 ssq_web.py</code> 并访问 " +
       "<code>http://127.0.0.1:8000</code>，不要直接双击打开 html 文件。";
   }
+}
+
+/** 读取数据生成时间并附加到数据概况后（info.json 不可用时静默忽略） */
+async function loadDataInfo() {
+  try {
+    const r = await fetch("data/info.json");
+    if (!r.ok) return;
+    const info = await r.json();
+    if (info.generated_at) {
+      $("dataRange").textContent += `，数据更新于 ${info.generated_at.replace("T", " ")}`;
+    }
+  } catch (e) { /* 忽略 */ }
 }
 
 function renderTags(container, pairs, cls) {
@@ -180,14 +193,17 @@ function weightedPick(pool, k) {
     const total = p.reduce((s, e) => s + e[1], 0);
     let r = Math.random() * total;
     let acc = 0;
+    let hit = -1;
     for (let j = 0; j < p.length; j++) {
       acc += p[j][1];
       if (r <= acc) {
-        out.push(p[j][0]);
-        p.splice(j, 1);
+        hit = j;
         break;
       }
     }
+    if (hit < 0) hit = p.length - 1;   // 浮点边界兜底
+    out.push(p[hit][0]);
+    p.splice(hit, 1);
   }
   return out.sort((a, b) => a - b);
 }
@@ -205,7 +221,10 @@ function structurallySane(reds) {
   return consecutive < 3;                                 // 3 组以上连号
 }
 
+let lastPicks = [];
+
 function renderPicks(picks) {
+  lastPicks = picks;
   const box = $("picks");
   box.innerHTML = "";
   picks.forEach((p, i) => {
@@ -235,18 +254,18 @@ async function genPicks() {
   try {
     const w = await getWeights();
     if (w) {
-      const redPool = jitterPool(w.red);
-      const bluePool = jitterPool(w.blue);
       const seen = new Set();
       const picks = [];
       let attempts = 0;
       while (picks.length < 10 && attempts < 5000) {
         attempts++;
+        // 每组抽取前重新加入随机扰动，保证组间多样性（与后端 recommend 一致）
+        const redPool = jitterPool(w.red);
         const reds = weightedPick(redPool, 6);
         const key = reds.join(",");
         if (seen.has(key) || !structurallySane(reds)) continue;
         seen.add(key);
-        picks.push({ reds, blue: weightedPick(bluePool, 1)[0] });
+        picks.push({ reds, blue: weightedPick(jitterPool(w.blue), 1)[0] });
       }
       renderPicks(picks);
       $("status").textContent = "";
@@ -285,7 +304,27 @@ async function updateData() {
   }
 }
 
+/** 一键复制全部推荐号码（剪贴板 API 不可用时降级为 execCommand） */
+async function copyPicks() {
+  if (!lastPicks.length) return;
+  const lines = lastPicks.map((p, i) =>
+    `${pad(i + 1)}. 红球 ${p.reds.map(pad).join(" ")} + 蓝球 ${pad(p.blue)}`);
+  const text = "双色球推荐号码（仅供娱乐参考，不构成投注建议）\n" + lines.join("\n");
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+  $("status").textContent = "✅ 已复制 10 组号码到剪贴板";
+}
+
 $("btnRecommend").addEventListener("click", genPicks);
+$("btnCopy").addEventListener("click", copyPicks);
 $("btnUpdate").addEventListener("click", updateData);
 $("window").addEventListener("change", loadStats);
 

@@ -76,8 +76,16 @@ class SSQHandler(BaseHTTPRequestHandler):
             if not str(target).startswith(str(STATIC_DIR.resolve())) or not target.is_file():
                 return self._send_json({"error": "not found"}, 404)
             types = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-                     ".html": "text/html; charset=utf-8"}
+                     ".html": "text/html; charset=utf-8", ".json": "application/json; charset=utf-8"}
             return self._send_file(target, types.get(target.suffix, "application/octet-stream"))
+
+        # 预计算静态数据（与 GitHub Pages 上 static/data/ 一致），本地模式同样静态优先
+        if route.startswith("/data/"):
+            data_dir = STATIC_DIR / "data"
+            target = (data_dir / route[len("/data/"):]).resolve()
+            if not str(target).startswith(str(data_dir.resolve())) or not target.is_file():
+                return self._send_json({"error": "not found"}, 404)
+            return self._send_file(target, "application/json; charset=utf-8")
 
         if route == "/api/stats":
             try:

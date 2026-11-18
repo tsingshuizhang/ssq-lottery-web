@@ -14,8 +14,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ssq import export_static, load_data, update_data  # noqa: E402
+from ssq import update_data  # noqa: E402
 
 if __name__ == "__main__":
+    # update_data 内部已合并去重并重建 static/data/ 静态文件，无需重复导出
     update_data(200)
-    export_static(load_data())

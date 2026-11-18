@@ -26,6 +26,7 @@ from pathlib import Path
 
 RED_MIN, RED_MAX, RED_COUNT = 1, 33, 6
 BLUE_MIN, BLUE_MAX = 1, 16
+ISSUES_PER_YEAR = 154  # 双色球每年约 153-154 期（每周二/四/日开奖，春节休市）
 DATA_FILE = Path(__file__).parent / "ssq_data.json"
 STATIC_DIR = Path(__file__).parent / "static" / "data"
 WINDOWS = (20, 30, 50, 100)  # 前端可选的统计窗口（与 static/index.html 下拉框一致）
@@ -36,6 +37,20 @@ API_URL = (
 
 
 # ---------------------------------------------------------------- 数据管理
+
+def validate_draw(d):
+    """校验单条开奖记录的合法性，非法数据返回 False（防止异常解析污染数据）。"""
+    try:
+        reds = d["red"]
+        return (
+            isinstance(d["issue"], str) and re.fullmatch(r"20\d{5}", d["issue"])
+            and len(reds) == RED_COUNT and len(set(reds)) == RED_COUNT
+            and all(RED_MIN <= n <= RED_MAX for n in reds)
+            and BLUE_MIN <= d["blue"] <= BLUE_MAX
+        )
+    except (KeyError, TypeError):
+        return False
+
 
 def load_data():
     """加载历史开奖数据，按期号升序返回。"""
@@ -73,10 +88,10 @@ def fetch_cwl(count):
             "red": sorted(int(x) for x in item["red"].split(",")),
             "blue": int(item["blue"]),
         })
-    return draws
+    return [d for d in draws if validate_draw(d)]
 
 
-def fetch_500(start_issue, end_issue):
+def fetch_500(start_issue, end_issue, allow_empty=False):
     """从 500.com 历史数据页抓取特定期号范围（GBK 编码 HTML）。
 
     作为福彩官网的备用数据源：官网对海外/机房 IP 返回 403（网宿云 WAF），
@@ -105,9 +120,31 @@ def fetch_500(start_issue, end_issue):
             continue
         date = next((c for c in cells if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", c)), "")
         draws.append({"issue": "20" + cells[idx], "date": date, "red": reds, "blue": blue})
-    if not draws:
+    if not draws and not allow_empty:
         raise RuntimeError("500.com 未解析到任何开奖数据")
-    return draws
+    return [d for d in draws if validate_draw(d)]
+
+
+def fetch_500_incremental(latest_issue, back=5, forward=30):
+    """围绕已知最新期号做增量抓取，自动处理期号跨年滚动。
+
+    期号格式 YYYYNNN，NNN 每年从 001 重新计数。若 latest + forward 超出
+    本年（约 ISSUES_PER_YEAR 期），新一年的期号（如 2027001）不在
+    "latest-5 ~ latest+30" 的整数区间内，简单加法会永远抓不到新一年的
+    数据，因此拆成"本年尾部 + 次年开头"两段抓取后合并。
+    """
+    year, nn = int(latest_issue[:4]), int(latest_issue[4:])
+    ranges = [(f"{year}{max(nn - back, 1):03d}", f"{year}{nn + forward:03d}")]
+    if nn + forward > ISSUES_PER_YEAR:
+        overflow = nn + forward - ISSUES_PER_YEAR
+        ranges.append((f"{year + 1}001", f"{year + 1}{overflow:03d}"))
+    merged = {}
+    for start, end in ranges:
+        for d in fetch_500(start, end, allow_empty=True):
+            merged[d["issue"]] = d
+    if not merged:
+        raise RuntimeError("500.com 未解析到任何开奖数据")
+    return sorted(merged.values(), key=lambda d: d["issue"])
 
 
 def update_data(count=100):
@@ -118,16 +155,22 @@ def update_data(count=100):
     except Exception as exc:
         print(f"福彩官网获取失败（{exc}），回退 500.com 数据源")
         old_draws = load_data()
-        latest = int(old_draws[-1]["issue"]) if old_draws else 0
-        # 只需覆盖"已知最新期 → 未来若干期"的增量窗口即可跟上新数据
-        fetched = fetch_500(str(max(latest - 5, 1)), str(latest + 30))
+        latest = old_draws[-1]["issue"] if old_draws else "2026001"
+        # 只需覆盖"已知最新期 → 未来若干期"的增量窗口即可跟上新数据（自动跨年）
+        fetched = fetch_500_incremental(latest)
         print(f"数据源：500.com（{len(fetched)} 期）")
 
     old = {d["issue"]: d for d in load_data()}
+    skipped = 0
     for d in fetched:
+        if not validate_draw(d):   # 双重保险：异常记录不入库
+            skipped += 1
+            continue
         if not d["date"] and d["issue"] in old:
             d["date"] = old[d["issue"]]["date"]  # 备用源缺失日期时保留已有值
         old[d["issue"]] = d
+    if skipped:
+        print(f"⚠️ 跳过 {skipped} 条格式异常的数据")
     merged = sorted(old.values(), key=lambda d: d["issue"])
     DATA_FILE.write_text(
         json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -319,12 +362,16 @@ def weighted_pick(weights, k):
         total = sum(pool.values())
         r = random.uniform(0, total)
         acc = 0.0
+        hit = None
         for num, w in pool.items():
             acc += w
             if r <= acc:
-                picked.append(num)
-                del pool[num]
+                hit = num
                 break
+        if hit is None:        # 浮点边界兜底：r 恰好落在累计误差之外
+            hit = next(reversed(pool))
+        picked.append(hit)
+        del pool[hit]
     return sorted(picked)
 
 
@@ -341,18 +388,24 @@ def structurally_sane(reds):
     return True
 
 
-def recommend(draws, count=10, max_attempts=500):
-    """生成 count 组推荐号码（红球组合不重复）。"""
-    red_w, blue_w = score_weights(draws)
+def recommend(draws, count=10, max_attempts=500, w_rand=0.2):
+    """生成 count 组推荐号码（红球组合不重复）。
+
+    每组抽取前都在基础得分上重新加入随机扰动，避免 10 组共用同一权重池
+    导致组间号码高度雷同。
+    """
+    red_base, blue_base = base_scores(draws)
     picks, seen = [], set()
     attempts = 0
     while len(picks) < count and attempts < max_attempts * count:
         attempts += 1
+        red_w = {i: s + w_rand * random.random() for i, s in red_base.items()}
         reds = tuple(weighted_pick(red_w, RED_COUNT))
         if reds in seen:
             continue
         if not structurally_sane(reds):
             continue
+        blue_w = {i: s + w_rand * random.random() for i, s in blue_base.items()}
         blue = weighted_pick(blue_w, 1)[0]
         seen.add(reds)
         picks.append((list(reds), blue))
@@ -366,9 +419,13 @@ def main():
     parser.add_argument("-n", "--count", type=int, default=10, help="推荐号码组数（默认 10）")
     parser.add_argument("-w", "--window", type=int, default=30, help="统计窗口期数（默认 30）")
     parser.add_argument("-s", "--stats", action="store_true", help="只显示统计分析，不推荐号码")
+    parser.add_argument("--seed", type=int, default=None, help="随机种子（固定后推荐结果可复现）")
     parser.add_argument("-u", "--update", type=int, metavar="N", nargs="?", const=100,
                         help="从官方接口更新最近 N 期数据（默认 100）")
     args = parser.parse_args()
+
+    if args.seed is not None:
+        random.seed(args.seed)
 
     if args.update:
         update_data(args.update)

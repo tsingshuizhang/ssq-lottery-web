@@ -254,6 +254,12 @@ table.recent td:first-child { color: var(--muted); }
   box-shadow: 0 0 8px rgba(255, 184, 0, .5);
 }
 .prize.none { background: #eee; color: #999; font-weight: 400; }
+.ck-raw { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.ck-raw pre {
+  margin-top: 6px; padding: 8px 10px; max-height: 140px; overflow: auto;
+  background: #fafafa; border: 1px solid var(--border); border-radius: 8px;
+  font-size: 11px; white-space: pre-wrap; word-break: break-all;
+}
 
 /* 命中高亮：金色描边 + 发光 */
 .ball.hit {

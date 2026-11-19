@@ -398,7 +398,7 @@ async function getDraws() {
 
 /** 解析一行投注：提取数字，前 6 个为红球、第 7 个为蓝球 */
 function parseBetLine(line) {
-  const nums = (line.match(/\d{1,2}/g) || []).map(Number);
+  const nums = extractNums(line);   // 词边界匹配，粘贴内容含期号也不会污染
   if (nums.length < 7) return null;
   const reds = nums.slice(0, 6), blue = nums[6];
   if (new Set(reds).size !== 6 || !reds.every((n) => n >= 1 && n <= 33) || blue < 1 || blue > 16) {
@@ -482,26 +482,116 @@ async function checkTickets() {
 
 let tesseractLoading = null;
 
-/** 按需加载 Tesseract.js（CDN），仅在用户点击拍照时下载 */
+const TESSERACT_CDNS = [
+  "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js",
+  "https://unpkg.com/tesseract.js@5/dist/tesseract.min.js",
+];
+
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+/** 按需加载 Tesseract.js（多 CDN 兜底），仅在用户点击拍照时下载 */
 function loadTesseract() {
   if (window.Tesseract) return Promise.resolve();
   if (tesseractLoading) return tesseractLoading;
-  tesseractLoading = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-    s.onload = resolve;
-    s.onerror = () => reject(new Error("识别引擎加载失败（网络问题）"));
-    document.head.appendChild(s);
-  });
+  tesseractLoading = (async () => {
+    for (const src of TESSERACT_CDNS) {
+      try {
+        await loadScript(src);
+        return;
+      } catch (e) { /* 尝试下一个 CDN */ }
+    }
+    tesseractLoading = null;
+    throw new Error("识别引擎加载失败（网络问题），请重试或手动输入");
+  })();
   return tesseractLoading;
 }
 
-/** 从 OCR 文本中提取候选投注行（7 个数字：6 红 + 1 蓝） */
+/** 图片预处理：放大 + 灰度 + 二值化，显著提升票面数字识别率 */
+function preprocessImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(3, Math.max(1, 2000 / img.width));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      const im = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = im.data;
+      const gray = new Uint8Array(canvas.width * canvas.height);
+      let sum = 0;
+      for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+        const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        gray[j] = g;
+        sum += g;
+      }
+      const thr = (sum / gray.length) * 0.85;  // 票面偏亮，阈值略低于均值
+      for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+        const v = gray[j] > thr ? 255 : 0;
+        d[i] = d[i + 1] = d[i + 2] = v;
+      }
+      ctx.putImageData(im, 0, 0);
+      resolve(canvas);
+    };
+    img.onerror = () => reject(new Error("图片读取失败"));
+    img.src = url;
+  });
+}
+
+/** OCR 常见误读修正：O→0、l/I/|→1、Z→2、S→5、B→8、G→6 */
+function cleanOcrLine(line) {
+  return line
+    .replace(/[OoQq]/g, "0").replace(/[lI|!]/g, "1").replace(/[Zz]/g, "2")
+    .replace(/[Ss]/g, "5").replace(/[Bb]/g, "8").replace(/[Gg]/g, "6")
+    .replace(/[，。、；;·]/g, " ");
+}
+
+/** 从一行文本提取数字序列（先剥离日期，再词边界匹配，期号/日期不会污染） */
+function extractNums(line) {
+  const cleaned = cleanOcrLine(line)
+    .replace(/20\d{2}\s*[-/年.]\s*\d{1,2}\s*[-/月.]\s*\d{1,2}\s*日?/g, " ");
+  return (cleaned.match(/\b\d{1,2}\b/g) || []).map(Number);
+}
+
+/** 在数字序列中滑动提取合法投注（6 红 + 1 蓝），可识别一行多注 */
+function extractBets(nums) {
+  const bets = [];
+  let i = 0;
+  while (i + 7 <= nums.length) {
+    const reds = nums.slice(i, i + 6), blue = nums[i + 6];
+    if (new Set(reds).size === 6 && reds.every((n) => n >= 1 && n <= 33) && blue >= 1 && blue <= 16) {
+      bets.push({ reds, blue });
+      i += 7;
+    } else {
+      i += 1;
+    }
+  }
+  return bets;
+}
+
+/** 从 OCR 全文中提取候选投注（去重） */
 function parseOcrText(text) {
+  const seen = new Set();
   const bets = [];
   text.split("\n").forEach((line) => {
-    const bet = parseBetLine(line);
-    if (bet) bets.push(bet.reds.map(pad).join(" ") + " + " + pad(bet.blue));
+    extractBets(extractNums(line)).forEach((bet) => {
+      const s = bet.reds.map(pad).join(" ") + " + " + pad(bet.blue);
+      if (!seen.has(s)) {
+        seen.add(s);
+        bets.push(s);
+      }
+    });
   });
   return bets;
 }
@@ -510,11 +600,21 @@ async function ocrPhoto(file) {
   $("ckStatus").textContent = "正在加载识别引擎（首次需几秒）…";
   try {
     await loadTesseract();
+    $("ckStatus").textContent = "正在预处理图片…";
+    const canvas = await preprocessImage(file);
+    const worker = await Tesseract.createWorker("eng");
+    await worker.setParameter("tessedit_char_whitelist", " 0123456789");
+    await worker.setParameter("tessedit_pageseg_mode", "6");
     $("ckStatus").textContent = "正在识别照片中的号码…";
-    const { data } = await Tesseract.recognize(file, "eng");
+    const { data } = await worker.recognize(canvas);
+    await worker.terminate();
+    if ($("ckRaw")) {
+      $("ckRaw").textContent = data.text || "（空）";
+      $("ckRawWrap").hidden = false;
+    }
     const bets = parseOcrText(data.text || "");
     if (!bets.length) {
-      $("ckStatus").textContent = "未能从照片中识别出有效号码，请手动输入";
+      $("ckStatus").textContent = "未能识别出有效号码——请对准号码区域、票面放平重拍，或手动输入";
       return;
     }
     $("ckBets").value = bets.join("\n");

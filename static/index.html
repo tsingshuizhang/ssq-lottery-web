@@ -49,6 +49,7 @@
     <!-- 中奖查询 -->
     <section class="panel">
       <h2>中奖查询 <small>（输入期号和彩票号码，对照开奖结果算奖级）</small></h2>
+      <p class="legend">📷 拍照技巧：镜头对准投注号码区域、票面放平、避免反光，识别率更高；识别结果请核对后再查询。</p>
       <div class="check-form">
         <label class="ck-issue">期号
           <input id="ckIssue" type="text" inputmode="numeric" placeholder="如 2026132">
@@ -63,6 +64,10 @@
         </div>
         <span id="ckStatus" class="status"></span>
       </div>
+      <details id="ckRawWrap" class="ck-raw" hidden>
+        <summary>查看识别原文（核对用）</summary>
+        <pre id="ckRaw"></pre>
+      </details>
       <div id="ckResult"></div>
     </section>
 

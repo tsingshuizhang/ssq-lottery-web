@@ -619,8 +619,18 @@ async function ocrPhoto(file) {
     $("ckStatus").textContent = "正在预处理图片…";
     const canvas = await preprocessImage(file);
     const worker = await Tesseract.createWorker("eng");
-    await worker.setParameter("tessedit_char_whitelist", " 0123456789");
-    await worker.setParameter("tessedit_pageseg_mode", "6");
+    // v5 用 setParameters（对象）；v4 用 setParameter（键值对），按可用 API 自适应
+    const tessParams = {
+      tessedit_char_whitelist: " 0123456789",
+      tessedit_pageseg_mode: "6",
+    };
+    if (typeof worker.setParameters === "function") {
+      await worker.setParameters(tessParams);
+    } else if (typeof worker.setParameter === "function") {
+      for (const [k, v] of Object.entries(tessParams)) {
+        await worker.setParameter(k, v);
+      }
+    }
     $("ckStatus").textContent = "正在识别照片中的号码…";
     const { data } = await worker.recognize(canvas);
     await worker.terminate();

@@ -557,11 +557,21 @@ function cleanOcrLine(line) {
     .replace(/[，。、；;·]/g, " ");
 }
 
-/** 从一行文本提取数字序列（先剥离日期，再词边界匹配，期号/日期不会污染） */
+/** 从一行文本提取数字序列（先剥离日期；期号/机号等长数字串整体忽略；
+ *  4 位数字多为两个号码粘连，如 "3104" ← "31-04"，两半都在号码范围内时拆开） */
 function extractNums(line) {
   const cleaned = cleanOcrLine(line)
     .replace(/20\d{2}\s*[-/年.]\s*\d{1,2}\s*[-/月.]\s*\d{1,2}\s*日?/g, " ");
-  return (cleaned.match(/\b\d{1,2}\b/g) || []).map(Number);
+  const nums = [];
+  (cleaned.match(/\d+/g) || []).forEach((tok) => {
+    if (tok.length <= 2) {
+      nums.push(Number(tok));
+    } else if (tok.length === 4) {
+      const a = Number(tok.slice(0, 2)), b = Number(tok.slice(2));
+      if (a >= 1 && a <= 33 && b >= 1 && b <= 33) nums.push(a, b);
+    }
+  });
+  return nums;
 }
 
 /** 在数字序列中滑动提取合法投注（6 红 + 1 蓝），可识别一行多注 */

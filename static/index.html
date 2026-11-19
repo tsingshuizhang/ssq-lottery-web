@@ -46,6 +46,26 @@
       </div>
     </section>
 
+    <!-- 中奖查询 -->
+    <section class="panel">
+      <h2>中奖查询 <small>（输入期号和彩票号码，对照开奖结果算奖级）</small></h2>
+      <div class="check-form">
+        <label class="ck-issue">期号
+          <input id="ckIssue" type="text" inputmode="numeric" placeholder="如 2026132">
+        </label>
+        <label class="ck-bets-label">彩票号码（每行一注，格式：6 个红球 + 蓝球）
+          <textarea id="ckBets" rows="3" placeholder="01 05 12 18 23 30 + 07"></textarea>
+        </label>
+        <div class="ck-actions">
+          <button id="btnCheck" class="btn primary">🔍 查询是否中奖</button>
+          <button id="btnOcr" class="btn ghost">📷 拍照识别号码</button>
+          <input id="ckPhoto" type="file" accept="image/*" capture="environment" hidden>
+        </div>
+        <span id="ckStatus" class="status"></span>
+      </div>
+      <div id="ckResult"></div>
+    </section>
+
     <!-- 统计分析 -->
     <section class="panel">
       <h2>冷热号统计 <small id="windowLabel"></small></h2>

@@ -208,6 +208,10 @@ def export_static(draws):
         (STATIC_DIR / f"backtest_{w}.json").write_text(
             json.dumps(bt, ensure_ascii=False) + "\n", encoding="utf-8"
         )
+    # 全量开奖数据，供前端"中奖查询"按任意期号查找（文件约 20KB，前端按需加载一次）
+    (STATIC_DIR / "draws.json").write_text(
+        json.dumps(draws, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     info_range = [draws[0]["issue"], draws[-1]["issue"]]
     info_file = STATIC_DIR / "info.json"
     generated_at = datetime.now().isoformat(timespec="seconds")
@@ -522,6 +526,54 @@ def show_backtest(draws, window=20, count=10, trials=50):
     return bt
 
 
+# ---------------------------------------------------------------- 中奖查询
+
+# (红球命中数, 蓝球是否命中) → (奖项, 单注奖金说明)；一等奖/二等奖为浮动奖金
+PRIZE_TABLE = {
+    (6, True): ("一等奖", "浮动奖金（封顶 1000 万元）"),
+    (6, False): ("二等奖", "浮动奖金"),
+    (5, True): ("三等奖", "3000 元"),
+    (5, False): ("四等奖", "200 元"),
+    (4, True): ("四等奖", "200 元"),
+    (4, False): ("五等奖", "10 元"),
+    (3, True): ("五等奖", "10 元"),
+    (2, True): ("六等奖", "5 元"),
+    (1, True): ("六等奖", "5 元"),
+    (0, True): ("六等奖", "5 元"),
+}
+
+
+def find_draw(draws, issue):
+    """按期号查找开奖记录，未找到返回 None。"""
+    issue = str(issue).strip()
+    for d in draws:
+        if d["issue"] == issue:
+            return d
+    return None
+
+
+def validate_ticket(reds, blue):
+    """校验一注彩票号码的合法性（红球 6 个 1-33 不重复，蓝球 1-16）。"""
+    return (len(reds) == RED_COUNT and len(set(reds)) == RED_COUNT
+            and all(RED_MIN <= n <= RED_MAX for n in reds)
+            and BLUE_MIN <= blue <= BLUE_MAX)
+
+
+def check_prize(reds, blue, draw):
+    """对照开奖记录计算一注彩票的奖项。
+
+    返回 {"red_hits", "hit_reds", "blue_hit", "prize", "amount"}，
+    未中奖时 prize / amount 为 None。
+    """
+    hit_reds = sorted(set(reds) & set(draw["red"]))
+    blue_hit = blue == draw["blue"]
+    prize, amount = PRIZE_TABLE.get((len(hit_reds), blue_hit), (None, None))
+    return {
+        "red_hits": len(hit_reds), "hit_reds": hit_reds,
+        "blue_hit": blue_hit, "prize": prize, "amount": amount,
+    }
+
+
 # ---------------------------------------------------------------- 入口
 
 def main():
@@ -534,6 +586,9 @@ def main():
                         help="历史回测最近 N 期（默认 20）：模型 vs 纯随机基线")
     parser.add_argument("--trials", type=int, default=50,
                         help="回测每期的蒙特卡洛抽样次数（默认 50）")
+    parser.add_argument("--check", metavar="ISSUE", help="查询彩票是否中奖（配合 --red / --blue）")
+    parser.add_argument("--red", metavar="N1,N2,…,N6", help="彩票红球，逗号或空格分隔")
+    parser.add_argument("--blue", type=int, help="彩票蓝球")
     parser.add_argument("-u", "--update", type=int, metavar="N", nargs="?", const=100,
                         help="从官方接口更新最近 N 期数据（默认 100）")
     args = parser.parse_args()
@@ -547,6 +602,31 @@ def main():
 
     draws = load_data()
     print(f"已加载 {len(draws)} 期历史数据（{draws[0]['issue']} ~ {draws[-1]['issue']}）")
+
+    if args.check:
+        if not args.red or args.blue is None:
+            parser.error("--check 需要同时提供 --red 和 --blue")
+        try:
+            reds = sorted(int(x) for x in re.split(r"[,\s]+", args.red.strip()) if x)
+        except ValueError:
+            sys.exit("红球格式错误，示例：--red \"01,05,12,18,23,30\"")
+        if not validate_ticket(reds, args.blue):
+            sys.exit("号码不合法：红球需 6 个 1-33 不重复，蓝球 1-16")
+        draw = find_draw(draws, args.check)
+        if draw is None:
+            sys.exit(f"未找到 {args.check} 期开奖数据（当前数据 {draws[0]['issue']} ~ {draws[-1]['issue']}）")
+        r = check_prize(reds, args.blue, draw)
+        actual = " ".join(f"{n:02d}" for n in draw["red"]) + f" + {draw['blue']:02d}"
+        ticket = " ".join(f"{n:02d}" for n in reds) + f" + {args.blue:02d}"
+        print(f"\n{draw['issue']} 期开奖号码：{actual}")
+        print(f"您的彩票号码　　：{ticket}")
+        print(f"命中：红球 {r['red_hits']} 个（{' '.join(f'{n:02d}' for n in r['hit_reds']) or '无'}）"
+              f"，蓝球{'命中' if r['blue_hit'] else '未中'}")
+        if r["prize"]:
+            print(f"🎉 恭喜！中{r['prize']}（{r['amount']}）")
+        else:
+            print("未中奖，再接再厉！")
+        return
 
     if args.backtest:
         show_backtest(draws, window=args.backtest, count=args.count, trials=args.trials)

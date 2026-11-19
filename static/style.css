@@ -221,3 +221,42 @@ table.recent td:first-child { color: var(--muted); }
 .bt-card { text-align: center; }
 .bt-table td:nth-child(3), .bt-table td:nth-child(4) { white-space: nowrap; }
 .bt-table td small { color: var(--muted); font-size: 11px; }
+
+/* ---------- 中奖查询 ---------- */
+.check-form { display: flex; flex-direction: column; gap: 10px; }
+.ck-issue input {
+  margin-left: 6px; padding: 8px 10px; width: 130px;
+  border: 1px solid var(--border); border-radius: 8px; font-size: 14px;
+}
+.ck-bets-label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+.ck-bets-label textarea {
+  padding: 10px; border: 1px solid var(--border); border-radius: 8px;
+  font-size: 15px; font-family: inherit; resize: vertical; line-height: 1.7;
+}
+.ck-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.ck-draw {
+  margin-top: 14px; padding: 10px 12px; border-radius: 10px;
+  background: #fafafa; border: 1px solid var(--border);
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.ck-bet {
+  margin-top: 8px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.ck-bet-nums { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.prize {
+  margin-left: auto; padding: 4px 12px; border-radius: 999px;
+  font-size: 13px; font-weight: 700; white-space: nowrap;
+}
+.prize.win {
+  background: linear-gradient(90deg, #ffd94d, #ffb800); color: #7a4d00;
+  box-shadow: 0 0 8px rgba(255, 184, 0, .5);
+}
+.prize.none { background: #eee; color: #999; font-weight: 400; }
+
+/* 命中高亮：金色描边 + 发光 */
+.ball.hit {
+  box-shadow: 0 0 0 2px #f5c518, 0 0 8px rgba(245, 197, 24, .65);
+  font-weight: 800;
+}

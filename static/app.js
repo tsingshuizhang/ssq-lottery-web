@@ -365,6 +365,176 @@ async function loadBacktest() {
   } catch (e) { /* 回测数据不可用时静默（不影响主功能） */ }
 }
 
+/* ---------------- 中奖查询 ---------------- */
+
+/** 双色球奖级表（与后端 ssq.PRIZE_TABLE 一致）："红命中数-蓝是否命中" → [奖项, 奖金说明] */
+const PRIZE_TABLE = {
+  "6-1": ["一等奖", "浮动奖金（封顶 1000 万元）"],
+  "6-0": ["二等奖", "浮动奖金"],
+  "5-1": ["三等奖", "3000 元"],
+  "5-0": ["四等奖", "200 元"],
+  "4-1": ["四等奖", "200 元"],
+  "4-0": ["五等奖", "10 元"],
+  "3-1": ["五等奖", "10 元"],
+  "2-1": ["六等奖", "5 元"],
+  "1-1": ["六等奖", "5 元"],
+  "0-1": ["六等奖", "5 元"],
+};
+
+let drawsCache = null;
+
+/** 读取全量开奖数据（静态文件优先；本地后端兜底时返回 null，走 /api/check） */
+async function getDraws() {
+  if (drawsCache) return drawsCache;
+  try {
+    const r = await fetch("data/draws.json");
+    if (r.ok) {
+      drawsCache = await r.json();
+      return drawsCache;
+    }
+  } catch (e) { /* 走后端 */ }
+  return null;
+}
+
+/** 解析一行投注：提取数字，前 6 个为红球、第 7 个为蓝球 */
+function parseBetLine(line) {
+  const nums = (line.match(/\d{1,2}/g) || []).map(Number);
+  if (nums.length < 7) return null;
+  const reds = nums.slice(0, 6), blue = nums[6];
+  if (new Set(reds).size !== 6 || !reds.every((n) => n >= 1 && n <= 33) || blue < 1 || blue > 16) {
+    return null;
+  }
+  return { reds, blue };
+}
+
+/** 计算一注彩票的奖项（与后端 check_prize 一致） */
+function checkPrizeJs(reds, blue, draw) {
+  const hitReds = reds.filter((n) => draw.red.includes(n)).sort((a, b) => a - b);
+  const blueHit = blue === draw.blue;
+  const [prize, amount] = PRIZE_TABLE[`${hitReds.length}-${blueHit ? 1 : 0}`] || [null, null];
+  return { redHits: hitReds.length, hitReds, blueHit, prize, amount };
+}
+
+function renderCheckResult(draw, items) {
+  const box = $("ckResult");
+  box.innerHTML = "";
+  const head = document.createElement("div");
+  head.className = "ck-draw";
+  head.innerHTML = `<b>${draw.issue}</b> 期开奖号码：` +
+    draw.red.map((n) => `<span class="ball small red">${pad(n)}</span>`).join("") +
+    `<span class="plus">+</span><span class="ball small blue">${pad(draw.blue)}</span>`;
+  box.appendChild(head);
+  items.forEach(({ bet, res }) => {
+    const row = document.createElement("div");
+    row.className = "ck-bet";
+    const nums = bet.reds.map((n) =>
+      `<span class="ball small red${res.hitReds.includes(n) ? " hit" : ""}">${pad(n)}</span>`
+    ).join("") +
+      `<span class="plus">+</span>` +
+      `<span class="ball small blue${res.blueHit ? " hit" : ""}">${pad(bet.blue)}</span>`;
+    const badge = res.prize
+      ? `<span class="prize win">🎉 ${res.prize} · ${res.amount}</span>`
+      : `<span class="prize none">未中奖</span>`;
+    row.innerHTML = `<div class="ck-bet-nums">${nums}</div>${badge}`;
+    box.appendChild(row);
+  });
+}
+
+async function checkTickets() {
+  const issue = $("ckIssue").value.trim();
+  const lines = $("ckBets").value.split("\n").map((l) => l.trim()).filter(Boolean);
+  $("ckResult").innerHTML = "";
+  if (!issue) { $("ckStatus").textContent = "请先填写期号"; return; }
+  if (!lines.length) { $("ckStatus").textContent = "请输入至少一注彩票号码"; return; }
+  const bets = lines.map(parseBetLine);
+  if (bets.some((b) => !b)) {
+    $("ckStatus").textContent = "有号码行格式不正确：每行需 6 个红球（1-33 不重复）+ 1 个蓝球（1-16）";
+    return;
+  }
+  $("ckStatus").textContent = "";
+  const draws = await getDraws();
+  if (draws) {
+    const draw = draws.find((d) => d.issue === issue);
+    if (!draw) {
+      $("ckStatus").textContent =
+        `未找到 ${issue} 期开奖数据（当前 ${draws[0].issue} ~ ${draws[draws.length - 1].issue}）`;
+      return;
+    }
+    renderCheckResult(draw, bets.map((bet) => ({ bet, res: checkPrizeJs(bet.reds, bet.blue, draw) })));
+    return;
+  }
+  // 本地后端兜底（无静态文件时逐注调用 /api/check）
+  try {
+    const out = [];
+    for (const bet of bets) {
+      const r = await fetch(`/api/check?issue=${issue}&red=${bet.reds.join(",")}&blue=${bet.blue}`);
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error);
+      out.push({ bet, res: data.result, draw: data.draw });
+    }
+    renderCheckResult(out[0].draw, out);
+  } catch (e) {
+    $("ckStatus").textContent = e.message;
+  }
+}
+
+/* ---------------- 拍照识别（浏览器端 OCR，按需加载 Tesseract.js） ---------------- */
+
+let tesseractLoading = null;
+
+/** 按需加载 Tesseract.js（CDN），仅在用户点击拍照时下载 */
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve();
+  if (tesseractLoading) return tesseractLoading;
+  tesseractLoading = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("识别引擎加载失败（网络问题）"));
+    document.head.appendChild(s);
+  });
+  return tesseractLoading;
+}
+
+/** 从 OCR 文本中提取候选投注行（7 个数字：6 红 + 1 蓝） */
+function parseOcrText(text) {
+  const bets = [];
+  text.split("\n").forEach((line) => {
+    const bet = parseBetLine(line);
+    if (bet) bets.push(bet.reds.map(pad).join(" ") + " + " + pad(bet.blue));
+  });
+  return bets;
+}
+
+async function ocrPhoto(file) {
+  $("ckStatus").textContent = "正在加载识别引擎（首次需几秒）…";
+  try {
+    await loadTesseract();
+    $("ckStatus").textContent = "正在识别照片中的号码…";
+    const { data } = await Tesseract.recognize(file, "eng");
+    const bets = parseOcrText(data.text || "");
+    if (!bets.length) {
+      $("ckStatus").textContent = "未能从照片中识别出有效号码，请手动输入";
+      return;
+    }
+    $("ckBets").value = bets.join("\n");
+    $("ckStatus").textContent = `识别到 ${bets.length} 注号码，请核对无误后再点「查询是否中奖」`;
+  } catch (e) {
+    $("ckStatus").textContent = "识别失败：" + e.message + "，可改为手动输入";
+  }
+}
+
+$("btnCheck").addEventListener("click", checkTickets);
+$("btnOcr").addEventListener("click", () => $("ckPhoto").click());
+$("ckPhoto").addEventListener("change", (e) => {
+  if (e.target.files[0]) ocrPhoto(e.target.files[0]);
+  e.target.value = "";
+});
+// 期号默认填最新一期
+getDraws().then((d) => {
+  if (d && !$("ckIssue").value) $("ckIssue").value = d[d.length - 1].issue;
+});
+
 $("btnRecommend").addEventListener("click", genPicks);
 $("btnCopy").addEventListener("click", copyPicks);
 $("btnUpdate").addEventListener("click", updateData);

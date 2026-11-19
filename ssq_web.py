@@ -17,12 +17,14 @@
 import argparse
 import io
 import json
+import re
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from ssq import backtest, load_data, recommend, stats_dict, update_data
+from ssq import (backtest, check_prize, find_draw, load_data, recommend,
+                 stats_dict, update_data, validate_ticket)
 
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
@@ -103,6 +105,23 @@ class SSQHandler(BaseHTTPRequestHandler):
                 window = 20
             draws = load_data()
             return self._send_json(backtest(draws, window=window))
+
+        if route == "/api/check":
+            issue = query.get("issue", [""])[0].strip()
+            try:
+                reds = sorted(int(x) for x in re.split(r"[,\s]+", query.get("red", [""])[0].strip()) if x)
+                blue = int(query.get("blue", ["0"])[0])
+            except ValueError:
+                return self._send_json({"ok": False, "error": "号码格式错误"}, 400)
+            if not validate_ticket(reds, blue):
+                return self._send_json(
+                    {"ok": False, "error": "号码不合法：红球需 6 个 1-33 不重复，蓝球 1-16"}, 400)
+            draws = load_data()
+            draw = find_draw(draws, issue)
+            if draw is None:
+                return self._send_json({"ok": False, "error": f"未找到 {issue} 期开奖数据"
+                                        f"（当前 {draws[0]['issue']} ~ {draws[-1]['issue']}）"}, 404)
+            return self._send_json({"ok": True, "draw": draw, "result": check_prize(reds, blue, draw)})
 
         if route == "/api/recommend":
             try:

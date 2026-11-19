@@ -580,11 +580,27 @@ function extractBets(nums) {
   return bets;
 }
 
-/** 从 OCR 全文中提取候选投注（去重） */
+/** 从 OCR 全文中提取开奖期号与候选投注（去重）。
+ *
+ * 票面布局规律：投注号码在上方，"开奖期/销售期/上期开奖号码"等页脚信息在下方。
+ * 期号取票面上第一个 20XXXXX 形式的 7 位数字；投注只从期号行之前的区域提取，
+ * 避免把页脚的"上期开奖号码"误当作用户投注。
+ */
 function parseOcrText(text) {
+  const lines = text.split("\n");
+  let issue = null, issueLineIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const m = cleanOcrLine(lines[i]).match(/\b20\d{5}\b/);
+    if (m) {
+      issue = m[0];
+      issueLineIdx = i;
+      break;
+    }
+  }
+  const betRegion = issueLineIdx > 0 ? lines.slice(0, issueLineIdx) : lines;
   const seen = new Set();
   const bets = [];
-  text.split("\n").forEach((line) => {
+  betRegion.forEach((line) => {
     extractBets(extractNums(line)).forEach((bet) => {
       const s = bet.reds.map(pad).join(" ") + " + " + pad(bet.blue);
       if (!seen.has(s)) {
@@ -593,7 +609,7 @@ function parseOcrText(text) {
       }
     });
   });
-  return bets;
+  return { issue, bets };
 }
 
 async function ocrPhoto(file) {
@@ -612,13 +628,17 @@ async function ocrPhoto(file) {
       $("ckRaw").textContent = data.text || "（空）";
       $("ckRawWrap").hidden = false;
     }
-    const bets = parseOcrText(data.text || "");
+    const { issue, bets } = parseOcrText(data.text || "");
+    if (issue) $("ckIssue").value = issue;
     if (!bets.length) {
-      $("ckStatus").textContent = "未能识别出有效号码——请对准号码区域、票面放平重拍，或手动输入";
+      $("ckStatus").textContent = (issue ? `已识别期号 ${issue}，但` : "") +
+        "未能识别出有效号码——请对准号码区域、票面放平重拍，或手动输入";
       return;
     }
     $("ckBets").value = bets.join("\n");
-    $("ckStatus").textContent = `识别到 ${bets.length} 注号码，请核对无误后再点「查询是否中奖」`;
+    $("ckStatus").textContent =
+      (issue ? `已识别期号 ${issue}、` : "") +
+      `识别到 ${bets.length} 注号码，请核对无误后再点「查询是否中奖」`;
   } catch (e) {
     $("ckStatus").textContent = "识别失败：" + e.message + "，可改为手动输入";
   }

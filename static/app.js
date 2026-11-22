@@ -415,56 +415,103 @@ function combinations(arr, k) {
   return res;
 }
 
-/** 解析一行投注，支持单式与复式。
+/** 校验并展开双色球胆拖投注。
  *
- * 单式：6 红 + 1 蓝（如 "01 05 12 18 23 30 + 07"）
- * 红复式：7-20 红 + 1 蓝
- * 蓝复式：6 红 + 2-16 蓝
- * 全复式：7-20 红 + 2-16 蓝
+ * 规则：红球胆码 1-5 个，拖码至少 (6-胆码数) 个，胆+拖 ≤ 20 且不重复；
+ * 蓝球 1-16 个不重复。每注必须从拖码中选 (6-胆码数) 个与全部胆码组成 6 红。
+ */
+function validateDantuo(dan, tuo, blues) {
+  if (dan.length < 1 || dan.length > 5) return false;
+  const need = 6 - dan.length;
+  if (tuo.length < need) return false;
+  if (dan.length + tuo.length > 20) return false;
+  const all = new Set([...dan, ...tuo]);
+  if (all.size !== dan.length + tuo.length) return false;
+  if (![...all].every((n) => n >= 1 && n <= 33)) return false;
+  if (blues.length < 1 || blues.length > 16) return false;
+  if (!blues.every((n) => n >= 1 && n <= 16)) return false;
+  return true;
+}
+
+function expandDantuo(dan, tuo, blues) {
+  const need = 6 - dan.length;
+  const sortedDan = [...dan].sort((a, b) => a - b);
+  const singles = [];
+  for (const combo of combinations([...tuo].sort((a, b) => a - b), need)) {
+    const reds = [...sortedDan, ...combo].sort((a, b) => a - b);
+    for (const blue of [...blues].sort((a, b) => a - b)) {
+      singles.push({ reds, blue });
+    }
+  }
+  return singles;
+}
+
+/** 解析一行投注，支持单式、复式与胆拖。
  *
- * 返回 { type, singles, original, reds, blues }；
- * singles 为拆好的所有单式；type 为 "single" 或 "compound"。
+ * 单式：  "01 05 12 18 23 30 + 07"
+ * 红复式："01 05 12 18 23 30 31 + 07"
+ * 蓝复式："01 05 12 18 23 30 + 07 09"
+ * 全复式："01 05 12 18 23 30 31 + 07 09"
+ * 胆拖：  "25 | 02 05 06 14 17 18 20 22 27 33 + 01 09 11 16"（胆码 | 拖码 + 蓝球）
+ *         或 "红胆:25 红拖:02 05 ... + 01 09 11 16"
+ *
+ * 返回 { type, singles, original, reds, blues, dan, tuo }；
+ * singles 为拆好的所有单式；type 为 "single"/"compound"/"dantuo"。
  */
 function parseBetLine(line) {
   line = line.trim();
   if (!line) return null;
 
-  let redNums, blueNums;
+  let redPart, bluePart;
   if (line.includes("+")) {
-    const [redPart, bluePart] = line.split("+").map((s) => s.trim());
-    redNums = extractNums(redPart);
-    blueNums = extractNums(bluePart);
+    [redPart, bluePart] = line.split("+").map((s) => s.trim());
   } else {
     const nums = extractNums(line);
     if (nums.length < 7) return null;
-    redNums = nums.slice(0, -1);
-    blueNums = nums.slice(-1);
+    redPart = line.replace(/\s*\d+\s*$/, ""); // 去掉最后一个数字（蓝球）
+    bluePart = String(nums[nums.length - 1]);
   }
 
-  // 去重并保持顺序
-  redNums = [...new Set(redNums)];
-  blueNums = [...new Set(blueNums)];
+  const blueNums = [...new Set(extractNums(bluePart))].filter((n) => n >= 1 && n <= 16);
+  if (blueNums.length < 1 || blueNums.length > 16) return null;
 
-  const redOk = redNums.length >= 6 && redNums.length <= 20
-    && redNums.every((n) => n >= 1 && n <= 33);
-  const blueOk = blueNums.length >= 1 && blueNums.length <= 16
-    && blueNums.every((n) => n >= 1 && n <= 16);
-  if (!redOk || !blueOk) return null;
+  // 尝试胆拖：红区含 "|" 或同时含 "胆"/"拖" 标签
+  let dan = [], tuo = [];
+  const isDantuoSyntax = redPart.includes("|") || (/[胆D]/.test(redPart) && /[拖T]/.test(redPart));
+  if (isDantuoSyntax) {
+    if (redPart.includes("|")) {
+      const [danPart, tuoPart] = redPart.split("|").map((s) => s.trim());
+      dan = extractNums(danPart);
+      tuo = extractNums(tuoPart);
+    } else {
+      // 标签格式：提取“胆”到“拖”之间的数字为胆码，“拖”之后的数字为拖码
+      const m = redPart.match(/(?:.*?[胆D]\s*:?\s*)([\d\s]+)(?:[拖T]\s*:?\s*)([\d\s]+)/);
+      if (m) {
+        dan = extractNums(m[1]);
+        tuo = extractNums(m[2]);
+      }
+    }
+    dan = [...new Set(dan)].filter((n) => n >= 1 && n <= 33);
+    tuo = [...new Set(tuo)].filter((n) => n >= 1 && n <= 33);
+    if (validateDantuo(dan, tuo, blueNums)) {
+      return {
+        type: "dantuo",
+        singles: expandDantuo(dan, tuo, blueNums),
+        original: line,
+        dan, tuo, blues: [...blueNums].sort((a, b) => a - b),
+      };
+    }
+  }
 
-  const isCompound = redNums.length > 6 || blueNums.length > 1;
+  // 普通复式/单式
+  const redNums = [...new Set(extractNums(redPart))].filter((n) => n >= 1 && n <= 33);
+  const redOk = redNums.length >= 6 && redNums.length <= 20;
+  if (!redOk) return null;
+
   const sortedReds = [...redNums].sort((a, b) => a - b);
   const sortedBlues = [...blueNums].sort((a, b) => a - b);
+  const isCompound = sortedReds.length > 6 || sortedBlues.length > 1;
 
-  if (!isCompound) {
-    return {
-      type: "single",
-      singles: [{ reds: sortedReds, blue: sortedBlues[0] }],
-      original: line,
-      reds: sortedReds, blues: sortedBlues,
-    };
-  }
-
-  // 复式拆单：红球 C(n,6) × 蓝球 m
   const singles = [];
   for (const combo of combinations(sortedReds, 6)) {
     for (const blue of sortedBlues) {
@@ -472,7 +519,7 @@ function parseBetLine(line) {
     }
   }
   return {
-    type: "compound",
+    type: isCompound ? "compound" : "single",
     singles,
     original: line,
     reds: sortedReds, blues: sortedBlues,
@@ -520,7 +567,7 @@ function renderCheckResult(draw, items) {
       return;
     }
 
-    // 复式：先展示汇总，再列出中奖的单注
+    // 复式/胆拖：先展示汇总，再列出中奖的单注
     const winning = item.singles.filter((s) => s.res.prize);
     const counts = {};
     winning.forEach((s) => { counts[s.res.prize] = (counts[s.res.prize] || 0) + 1; });
@@ -529,13 +576,16 @@ function renderCheckResult(draw, items) {
       .sort((a, b) => prizeOrder.indexOf(a[0]) - prizeOrder.indexOf(b[0]))
       .map(([p, c]) => `${p} × ${c}`).join(" · ") || "未中奖";
 
+    const isDantuo = item.type === "dantuo";
     const wrap = document.createElement("div");
-    wrap.className = "ck-bet compound";
+    wrap.className = `ck-bet compound${isDantuo ? " dantuo" : ""}`;
     const header = document.createElement("div");
     header.className = "ck-compound-header";
-    header.innerHTML =
-      `<span>复式 ${item.reds.length} 红 + ${item.blues.length} 蓝 = 共 ${item.singles.length} 注</span>` +
-      `<span class="prize ${winning.length ? "win" : "none"}">${winning.length ? "🎉 " + summary : "未中奖"}</span>`;
+    header.innerHTML = isDantuo
+      ? `<span>胆拖 ${item.dan.length} 胆 + ${item.tuo.length} 拖 + ${item.blues.length} 蓝 = 共 ${item.singles.length} 注</span>` +
+        `<span class="prize ${winning.length ? "win" : "none"}">${winning.length ? "🎉 " + summary : "未中奖"}</span>`
+      : `<span>复式 ${item.reds.length} 红 + ${item.blues.length} 蓝 = 共 ${item.singles.length} 注</span>` +
+        `<span class="prize ${winning.length ? "win" : "none"}">${winning.length ? "🎉 " + summary : "未中奖"}</span>`;
     wrap.appendChild(header);
 
     if (winning.length && winning.length <= 20) {
@@ -567,22 +617,22 @@ async function checkTickets() {
 
   const parsed = lines.map(parseBetLine);
   if (parsed.some((p) => !p)) {
-    $("ckStatus").textContent = "有号码行格式不正确：每行需 6-20 个红球（1-33 不重复）+ 1-16 个蓝球（不重复），红球>6 或 蓝球>1 即为复式";
+    $("ckStatus").textContent = "有号码行格式不正确：每行需 6-20 个红球（1-33 不重复）+ 1-16 个蓝球（不重复）；红球>6 或 蓝球>1 为复式；胆拖格式如“25 | 02 05 ... + 01 09";
     return;
   }
 
-  // 防止复式组合爆炸
+  // 防止复式/胆拖组合爆炸
   let totalSingles = 0;
   for (const p of parsed) {
     if (p.singles.length > MAX_SINGLES_PER_LINE) {
       $("ckStatus").textContent =
-        `第 ${parsed.indexOf(p) + 1} 行复式组合数过多（${p.singles.length} 注），请缩小复式范围后重试`;
+        `第 ${parsed.indexOf(p) + 1} 行组合数过多（${p.singles.length} 注），请缩小复式/胆拖范围后重试`;
       return;
     }
     totalSingles += p.singles.length;
   }
   if (totalSingles > 5000) {
-    $("ckStatus").textContent = "总投注组合数过多（>5000 注），请拆分为多行或减小复式范围";
+    $("ckStatus").textContent = "总投注组合数过多（>5000 注），请拆分为多行或减小复式/胆拖范围";
     return;
   }
 
@@ -595,20 +645,26 @@ async function checkTickets() {
         `未找到 ${issue} 期开奖数据（当前 ${draws[0].issue} ~ ${draws[draws.length - 1].issue}）`;
       return;
     }
-    const items = parsed.map((p) => ({
-      type: p.type,
-      bet: p.type === "single" ? p.singles[0] : null,
-      res: p.type === "single" ? checkPrizeJs(p.singles[0].reds, p.singles[0].blue, draw) : null,
-      reds: p.reds, blues: p.blues,
-      singles: p.type === "compound"
-        ? p.singles.map((s) => ({ bet: s, res: checkPrizeJs(s.reds, s.blue, draw) }))
-        : null,
-    }));
+    const items = parsed.map((p) => {
+      if (p.type === "single") {
+        return { type: "single", bet: p.singles[0], res: checkPrizeJs(p.singles[0].reds, p.singles[0].blue, draw) };
+      }
+      if (p.type === "dantuo") {
+        return {
+          type: "dantuo", dan: p.dan, tuo: p.tuo, blues: p.blues,
+          singles: p.singles.map((s) => ({ bet: s, res: checkPrizeJs(s.reds, s.blue, draw) })),
+        };
+      }
+      return {
+        type: "compound", reds: p.reds, blues: p.blues,
+        singles: p.singles.map((s) => ({ bet: s, res: checkPrizeJs(s.reds, s.blue, draw) })),
+      };
+    });
     renderCheckResult(draw, items);
     return;
   }
 
-  // 本地后端兜底：批量调用 /api/check_batch（避免复式产生大量 HTTP 请求）
+  // 本地后端兜底：批量调用 /api/check_batch（避免复式/胆拖产生大量 HTTP 请求）
   try {
     const allSingles = parsed.flatMap((p) => p.singles);
     const r = await fetch(
@@ -625,6 +681,9 @@ async function checkTickets() {
       }
       const slice = data.results.slice(idx, idx + p.singles.length);
       idx += p.singles.length;
+      if (p.type === "dantuo") {
+        return { type: "dantuo", dan: p.dan, tuo: p.tuo, blues: p.blues, singles: slice.map((res, i) => ({ bet: p.singles[i], res })) };
+      }
       return {
         type: "compound", reds: p.reds, blues: p.blues,
         singles: slice.map((res, i) => ({ bet: p.singles[i], res })),
@@ -740,7 +799,7 @@ function extractNums(line) {
  *   { type: "compound", reds: [7-20个], blues: [1-16个] }
  */
 function extractBetsFromLine(line) {
-  const cleaned = line.trim();
+  const cleaned = stripBrackets(line).trim();
   if (!cleaned) return [];
 
   let redNums, blueNums;
@@ -778,44 +837,44 @@ function formatBetString(bet) {
     : bet.reds.map(pad).join(" ") + " + " + bet.blues.map(pad).join(" ");
 }
 
-/** 基于票面标签（红复/蓝复/红球/蓝球等）解析复式投注。
- *
- * 处理常见彩票机打票面布局：
- *   - 红球与蓝球可能分多行显示
- *   - 红球区可能跨行延续（第一行带“红复”标签，后续行纯数字）
- *   - 蓝球区单独一行并带“蓝复”标签
- * 返回数组 [compactString] 或 null（无法按标签解析时）。
- */
-function parseByLabels(lines) {
+/** 去掉 OCR 常见干扰文本：括号/方括号内的倍数、备注等（如 [1倍]、（1倍））。 */
+function stripBrackets(text) {
+  return text.replace(/[【\[(（].*?[】\])）]/g, " ");
+}
+
+/** 判断文本行是否全为可延续的红球数字行（无中文、数字均在 1-33）。 */
+function isRedContinuation(line) {
+  const nums = extractNums(stripBrackets(line));
+  const hasChinese = /[\u4e00-\u9fa5]/.test(line);
+  return nums.length > 0 && !hasChinese && nums.every((n) => n >= 1 && n <= 33);
+}
+
+/** 基于票面标签解析普通复式投注（红复/蓝复/红球/蓝球）。 */
+function parseCompoundByLabels(lines) {
   const redNums = [], blueNums = [];
   let inRed = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    const cleanLine = stripBrackets(line);
     const hasRed = /红[复球区]?/.test(line);
     const hasBlue = /蓝[复球区]?/.test(line);
 
     if (hasRed && hasBlue) {
-      // 同一行同时出现红/蓝标签：在“蓝”字处切开
       const blueIdx = line.search(/蓝[复球区]?/);
-      redNums.push(...extractNums(line.slice(0, blueIdx)));
-      blueNums.push(...extractNums(line.slice(blueIdx)));
+      redNums.push(...extractNums(stripBrackets(line.slice(0, blueIdx))));
+      blueNums.push(...extractNums(stripBrackets(line.slice(blueIdx))));
       inRed = false;
     } else if (hasBlue) {
-      blueNums.push(...extractNums(line));
+      blueNums.push(...extractNums(cleanLine));
       inRed = false;
     } else if (hasRed) {
-      redNums.push(...extractNums(line));
+      redNums.push(...extractNums(cleanLine));
       inRed = true;
-    } else if (inRed) {
-      // 红球区跨行延续：当前行无中文且全为有效红球数字时才纳入
-      const nums = extractNums(line);
-      const hasChinese = /[\u4e00-\u9fa5]/.test(line);
-      if (nums.length > 0 && !hasChinese && nums.every((n) => n >= 1 && n <= 33)) {
-        redNums.push(...nums);
-      } else {
-        inRed = false;
-      }
+    } else if (inRed && isRedContinuation(line)) {
+      redNums.push(...extractNums(cleanLine));
+    } else {
+      inRed = false;
     }
   }
 
@@ -827,6 +886,64 @@ function parseByLabels(lines) {
   return [isCompound
     ? reds.map(pad).join(" ") + " + " + blues.map(pad).join(" ")
     : reds.map(pad).join(" ") + " + " + pad(blues[0])];
+}
+
+/** 基于票面标签解析胆拖投注（红胆/红拖/蓝球）。 */
+function parseDantuoByLabels(lines) {
+  const dan = [], tuo = [], blueNums = [];
+  let inTuo = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const cleanLine = stripBrackets(line);
+    const hasDan = /[胆D]/.test(line);
+    const hasTuo = /[拖T]/.test(line);
+    const hasBlue = /蓝[复球区]?/.test(line);
+
+    if (hasBlue) {
+      blueNums.push(...extractNums(cleanLine));
+      inTuo = false;
+      continue;
+    }
+    if (hasDan && hasTuo) {
+      const tuoIdx = line.search(/[拖T]/);
+      dan.push(...extractNums(stripBrackets(line.slice(0, tuoIdx))));
+      tuo.push(...extractNums(stripBrackets(line.slice(tuoIdx))));
+      inTuo = true;
+    } else if (hasDan) {
+      dan.push(...extractNums(cleanLine));
+    } else if (hasTuo) {
+      tuo.push(...extractNums(cleanLine));
+      inTuo = true;
+    } else if (inTuo && isRedContinuation(line)) {
+      tuo.push(...extractNums(cleanLine));
+    } else {
+      inTuo = false;
+    }
+  }
+
+  const danSet = [...new Set(dan)].filter((n) => n >= 1 && n <= 33);
+  const tuoSet = [...new Set(tuo)].filter((n) => n >= 1 && n <= 33);
+  const blues = [...new Set(blueNums)].filter((n) => n >= 1 && n <= 16);
+
+  if (validateDantuo(danSet, tuoSet, blues)) {
+    return [`${danSet.map(pad).join(" ")} | ${tuoSet.map(pad).join(" ")} + ${blues.map(pad).join(" ")}`];
+  }
+  return null;
+}
+
+/** 基于票面标签解析复式或胆拖投注。
+ *
+ * 优先检测“胆/拖”字样识别为胆拖；否则按红/蓝区识别为普通复式。
+ * 返回数组 [compactString] 或 null（无法按标签解析时）。
+ */
+function parseByLabels(lines) {
+  const hasDanTuo = lines.some((l) => /[胆拖]/.test(l));
+  if (hasDanTuo) {
+    const dantuo = parseDantuoByLabels(lines);
+    if (dantuo) return dantuo;
+  }
+  return parseCompoundByLabels(lines);
 }
 
 /** 从 OCR 全文中提取开奖期号与候选投注（去重）。

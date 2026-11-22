@@ -258,10 +258,12 @@ table.recent td:first-child { color: var(--muted); }
   flex-direction: column; align-items: stretch; gap: 6px;
   padding: 8px 10px; background: #fffbf2;
 }
+.ck-bet.compound.dantuo { background: #f2f8ff; }
 .ck-compound-header {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   font-size: 13px; font-weight: 600; color: #5c4b24;
 }
+.ck-bet.compound.dantuo .ck-compound-header { color: #243c5c; }
 .ck-compound-header .prize { margin-left: auto; }
 .ck-singles { width: 100%; }
 .ck-singles .ck-bet { background: #fff; margin-top: 4px; padding: 6px 8px; }

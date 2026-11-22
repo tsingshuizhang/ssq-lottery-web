@@ -771,6 +771,64 @@ function extractBetsFromLine(line) {
   return [{ type: "single", reds: redNums, blue: blueNums[0] }];
 }
 
+/** 将投注对象格式化为紧凑字符串（单式/复式通用）。 */
+function formatBetString(bet) {
+  return bet.type === "single"
+    ? bet.reds.map(pad).join(" ") + " + " + pad(bet.blue)
+    : bet.reds.map(pad).join(" ") + " + " + bet.blues.map(pad).join(" ");
+}
+
+/** 基于票面标签（红复/蓝复/红球/蓝球等）解析复式投注。
+ *
+ * 处理常见彩票机打票面布局：
+ *   - 红球与蓝球可能分多行显示
+ *   - 红球区可能跨行延续（第一行带“红复”标签，后续行纯数字）
+ *   - 蓝球区单独一行并带“蓝复”标签
+ * 返回数组 [compactString] 或 null（无法按标签解析时）。
+ */
+function parseByLabels(lines) {
+  const redNums = [], blueNums = [];
+  let inRed = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const hasRed = /红[复球区]?/.test(line);
+    const hasBlue = /蓝[复球区]?/.test(line);
+
+    if (hasRed && hasBlue) {
+      // 同一行同时出现红/蓝标签：在“蓝”字处切开
+      const blueIdx = line.search(/蓝[复球区]?/);
+      redNums.push(...extractNums(line.slice(0, blueIdx)));
+      blueNums.push(...extractNums(line.slice(blueIdx)));
+      inRed = false;
+    } else if (hasBlue) {
+      blueNums.push(...extractNums(line));
+      inRed = false;
+    } else if (hasRed) {
+      redNums.push(...extractNums(line));
+      inRed = true;
+    } else if (inRed) {
+      // 红球区跨行延续：当前行无中文且全为有效红球数字时才纳入
+      const nums = extractNums(line);
+      const hasChinese = /[\u4e00-\u9fa5]/.test(line);
+      if (nums.length > 0 && !hasChinese && nums.every((n) => n >= 1 && n <= 33)) {
+        redNums.push(...nums);
+      } else {
+        inRed = false;
+      }
+    }
+  }
+
+  const reds = [...new Set(redNums)].filter((n) => n >= 1 && n <= 33);
+  const blues = [...new Set(blueNums)].filter((n) => n >= 1 && n <= 16);
+  if (reds.length < 6 || blues.length < 1) return null;
+
+  const isCompound = reds.length > 6 || blues.length > 1;
+  return [isCompound
+    ? reds.map(pad).join(" ") + " + " + blues.map(pad).join(" ")
+    : reds.map(pad).join(" ") + " + " + pad(blues[0])];
+}
+
 /** 从 OCR 全文中提取开奖期号与候选投注（去重）。
  *
  * 票面布局规律：投注号码在上方，"开奖期/销售期/上期开奖号码"等页脚信息在下方。
@@ -778,7 +836,7 @@ function extractBetsFromLine(line) {
  * 避免把页脚的"上期开奖号码"误当作用户投注。
  */
 function parseOcrText(text) {
-  const lines = text.split("\n");
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   let issue = null, issueLineIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     const m = cleanOcrLine(lines[i]).match(/\b20\d{5}\b/);
@@ -789,13 +847,18 @@ function parseOcrText(text) {
     }
   }
   const betRegion = issueLineIdx > 0 ? lines.slice(0, issueLineIdx) : lines;
+
+  // 优先按“红复/蓝复”标签解析复式票面；失败再回退到行内解析
+  const labelBets = parseByLabels(betRegion);
+  if (labelBets && labelBets.length) {
+    return { issue, bets: labelBets };
+  }
+
   const seen = new Set();
   const bets = [];
   betRegion.forEach((line) => {
     extractBetsFromLine(line).forEach((bet) => {
-      const s = bet.type === "single"
-        ? bet.reds.map(pad).join(" ") + " + " + pad(bet.blue)
-        : bet.reds.map(pad).join(" ") + " + " + bet.blues.map(pad).join(" ");
+      const s = formatBetString(bet);
       if (!seen.has(s)) {
         seen.add(s);
         bets.push(s);

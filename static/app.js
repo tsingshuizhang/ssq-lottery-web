@@ -948,9 +948,9 @@ function parseByLabels(lines) {
 
 /** 从 OCR 全文中提取开奖期号与候选投注（去重）。
  *
- * 票面布局规律：投注号码在上方，"开奖期/销售期/上期开奖号码"等页脚信息在下方。
- * 期号取票面上第一个 20XXXXX 形式的 7 位数字；投注只从期号行之前的区域提取，
- * 避免把页脚的"上期开奖号码"误当作用户投注。
+ * 期号取票面上第一个 20XXXXX 形式的 7 位数字。
+ * 投注区不再假设“一定在期号行之前”——不同彩票票面期号可能在上、在中或在下；
+ * 因此标签解析使用“除期号行外的所有行”，依靠“红球/蓝球/红胆/红拖”等强标签定位投注。
  */
 function parseOcrText(text) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -963,17 +963,20 @@ function parseOcrText(text) {
       break;
     }
   }
-  const betRegion = issueLineIdx > 0 ? lines.slice(0, issueLineIdx) : lines;
+  // 除期号行外的所有行（期号行本身不含投注号码）
+  const candidateLines = issueLineIdx >= 0
+    ? lines.slice(0, issueLineIdx).concat(lines.slice(issueLineIdx + 1))
+    : lines;
 
-  // 优先按“红复/蓝复”标签解析复式票面；失败再回退到行内解析
-  const labelBets = parseByLabels(betRegion);
+  // 优先按“红球/蓝球/红胆/红拖”等标签解析；失败再回退到行内解析
+  const labelBets = parseByLabels(candidateLines);
   if (labelBets && labelBets.length) {
     return { issue, bets: labelBets };
   }
 
   const seen = new Set();
   const bets = [];
-  betRegion.forEach((line) => {
+  candidateLines.forEach((line) => {
     extractBetsFromLine(line).forEach((bet) => {
       const s = formatBetString(bet);
       if (!seen.has(s)) {

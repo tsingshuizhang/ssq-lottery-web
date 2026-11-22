@@ -396,15 +396,87 @@ async function getDraws() {
   return null;
 }
 
-/** 解析一行投注：提取数字，前 6 个为红球、第 7 个为蓝球 */
-function parseBetLine(line) {
-  const nums = extractNums(line);   // 词边界匹配，粘贴内容含期号也不会污染
-  if (nums.length < 7) return null;
-  const reds = nums.slice(0, 6), blue = nums[6];
-  if (new Set(reds).size !== 6 || !reds.every((n) => n >= 1 && n <= 33) || blue < 1 || blue > 16) {
-    return null;
+/** 从一行文本生成 k 个数的所有组合（用于复式拆单） */
+function combinations(arr, k) {
+  const res = [];
+  const path = [];
+  function backtrack(start) {
+    if (path.length === k) {
+      res.push([...path]);
+      return;
+    }
+    for (let i = start; i <= arr.length - k + path.length; i++) {
+      path.push(arr[i]);
+      backtrack(i + 1);
+      path.pop();
+    }
   }
-  return { reds, blue };
+  backtrack(0);
+  return res;
+}
+
+/** 解析一行投注，支持单式与复式。
+ *
+ * 单式：6 红 + 1 蓝（如 "01 05 12 18 23 30 + 07"）
+ * 红复式：7-20 红 + 1 蓝
+ * 蓝复式：6 红 + 2-16 蓝
+ * 全复式：7-20 红 + 2-16 蓝
+ *
+ * 返回 { type, singles, original, reds, blues }；
+ * singles 为拆好的所有单式；type 为 "single" 或 "compound"。
+ */
+function parseBetLine(line) {
+  line = line.trim();
+  if (!line) return null;
+
+  let redNums, blueNums;
+  if (line.includes("+")) {
+    const [redPart, bluePart] = line.split("+").map((s) => s.trim());
+    redNums = extractNums(redPart);
+    blueNums = extractNums(bluePart);
+  } else {
+    const nums = extractNums(line);
+    if (nums.length < 7) return null;
+    redNums = nums.slice(0, -1);
+    blueNums = nums.slice(-1);
+  }
+
+  // 去重并保持顺序
+  redNums = [...new Set(redNums)];
+  blueNums = [...new Set(blueNums)];
+
+  const redOk = redNums.length >= 6 && redNums.length <= 20
+    && redNums.every((n) => n >= 1 && n <= 33);
+  const blueOk = blueNums.length >= 1 && blueNums.length <= 16
+    && blueNums.every((n) => n >= 1 && n <= 16);
+  if (!redOk || !blueOk) return null;
+
+  const isCompound = redNums.length > 6 || blueNums.length > 1;
+  const sortedReds = [...redNums].sort((a, b) => a - b);
+  const sortedBlues = [...blueNums].sort((a, b) => a - b);
+
+  if (!isCompound) {
+    return {
+      type: "single",
+      singles: [{ reds: sortedReds, blue: sortedBlues[0] }],
+      original: line,
+      reds: sortedReds, blues: sortedBlues,
+    };
+  }
+
+  // 复式拆单：红球 C(n,6) × 蓝球 m
+  const singles = [];
+  for (const combo of combinations(sortedReds, 6)) {
+    for (const blue of sortedBlues) {
+      singles.push({ reds: combo, blue });
+    }
+  }
+  return {
+    type: "compound",
+    singles,
+    original: line,
+    reds: sortedReds, blues: sortedBlues,
+  };
 }
 
 /** 计算一注彩票的奖项（与后端 check_prize 一致） */
@@ -413,6 +485,20 @@ function checkPrizeJs(reds, blue, draw) {
   const blueHit = blue === draw.blue;
   const [prize, amount] = PRIZE_TABLE[`${hitReds.length}-${blueHit ? 1 : 0}`] || [null, null];
   return { redHits: hitReds.length, hitReds, blueHit, prize, amount };
+}
+
+const MAX_SINGLES_PER_LINE = 2000;  // 防止极端复式（如 20 红 × 16 蓝）拖挂浏览器
+
+function renderSingleBet(bet, res, draw) {
+  const nums = bet.reds.map((n) =>
+    `<span class="ball small red${res.hitReds.includes(n) ? " hit" : ""}">${pad(n)}</span>`
+  ).join("") +
+    `<span class="plus">+</span>` +
+    `<span class="ball small blue${res.blueHit ? " hit" : ""}">${pad(bet.blue)}</span>`;
+  const badge = res.prize
+    ? `<span class="prize win">🎉 ${res.prize} · ${res.amount}</span>`
+    : `<span class="prize none">未中奖</span>`;
+  return `<div class="ck-bet-nums">${nums}</div>${badge}`;
 }
 
 function renderCheckResult(draw, items) {
@@ -424,19 +510,51 @@ function renderCheckResult(draw, items) {
     draw.red.map((n) => `<span class="ball small red">${pad(n)}</span>`).join("") +
     `<span class="plus">+</span><span class="ball small blue">${pad(draw.blue)}</span>`;
   box.appendChild(head);
-  items.forEach(({ bet, res }) => {
-    const row = document.createElement("div");
-    row.className = "ck-bet";
-    const nums = bet.reds.map((n) =>
-      `<span class="ball small red${res.hitReds.includes(n) ? " hit" : ""}">${pad(n)}</span>`
-    ).join("") +
-      `<span class="plus">+</span>` +
-      `<span class="ball small blue${res.blueHit ? " hit" : ""}">${pad(bet.blue)}</span>`;
-    const badge = res.prize
-      ? `<span class="prize win">🎉 ${res.prize} · ${res.amount}</span>`
-      : `<span class="prize none">未中奖</span>`;
-    row.innerHTML = `<div class="ck-bet-nums">${nums}</div>${badge}`;
-    box.appendChild(row);
+
+  items.forEach((item) => {
+    if (item.type === "single") {
+      const row = document.createElement("div");
+      row.className = "ck-bet";
+      row.innerHTML = renderSingleBet(item.bet, item.res, draw);
+      box.appendChild(row);
+      return;
+    }
+
+    // 复式：先展示汇总，再列出中奖的单注
+    const winning = item.singles.filter((s) => s.res.prize);
+    const counts = {};
+    winning.forEach((s) => { counts[s.res.prize] = (counts[s.res.prize] || 0) + 1; });
+    const prizeOrder = ["一等奖", "二等奖", "三等奖", "四等奖", "五等奖", "六等奖"];
+    const summary = Object.entries(counts)
+      .sort((a, b) => prizeOrder.indexOf(a[0]) - prizeOrder.indexOf(b[0]))
+      .map(([p, c]) => `${p} × ${c}`).join(" · ") || "未中奖";
+
+    const wrap = document.createElement("div");
+    wrap.className = "ck-bet compound";
+    const header = document.createElement("div");
+    header.className = "ck-compound-header";
+    header.innerHTML =
+      `<span>复式 ${item.reds.length} 红 + ${item.blues.length} 蓝 = 共 ${item.singles.length} 注</span>` +
+      `<span class="prize ${winning.length ? "win" : "none"}">${winning.length ? "🎉 " + summary : "未中奖"}</span>`;
+    wrap.appendChild(header);
+
+    if (winning.length && winning.length <= 20) {
+      const list = document.createElement("div");
+      list.className = "ck-singles";
+      winning.forEach((s) => {
+        const row = document.createElement("div");
+        row.className = "ck-bet";
+        row.innerHTML = renderSingleBet(s.bet, s.res, draw);
+        list.appendChild(row);
+      });
+      wrap.appendChild(list);
+    } else if (winning.length > 20) {
+      const note = document.createElement("div");
+      note.className = "ck-note";
+      note.textContent = `中奖注数较多，仅显示汇总；共 ${winning.length} 注中奖`;
+      wrap.appendChild(note);
+    }
+    box.appendChild(wrap);
   });
 }
 
@@ -446,11 +564,28 @@ async function checkTickets() {
   $("ckResult").innerHTML = "";
   if (!issue) { $("ckStatus").textContent = "请先填写期号"; return; }
   if (!lines.length) { $("ckStatus").textContent = "请输入至少一注彩票号码"; return; }
-  const bets = lines.map(parseBetLine);
-  if (bets.some((b) => !b)) {
-    $("ckStatus").textContent = "有号码行格式不正确：每行需 6 个红球（1-33 不重复）+ 1 个蓝球（1-16）";
+
+  const parsed = lines.map(parseBetLine);
+  if (parsed.some((p) => !p)) {
+    $("ckStatus").textContent = "有号码行格式不正确：每行需 6-20 个红球（1-33 不重复）+ 1-16 个蓝球（不重复），红球>6 或 蓝球>1 即为复式";
     return;
   }
+
+  // 防止复式组合爆炸
+  let totalSingles = 0;
+  for (const p of parsed) {
+    if (p.singles.length > MAX_SINGLES_PER_LINE) {
+      $("ckStatus").textContent =
+        `第 ${parsed.indexOf(p) + 1} 行复式组合数过多（${p.singles.length} 注），请缩小复式范围后重试`;
+      return;
+    }
+    totalSingles += p.singles.length;
+  }
+  if (totalSingles > 5000) {
+    $("ckStatus").textContent = "总投注组合数过多（>5000 注），请拆分为多行或减小复式范围";
+    return;
+  }
+
   $("ckStatus").textContent = "";
   const draws = await getDraws();
   if (draws) {
@@ -460,19 +595,42 @@ async function checkTickets() {
         `未找到 ${issue} 期开奖数据（当前 ${draws[0].issue} ~ ${draws[draws.length - 1].issue}）`;
       return;
     }
-    renderCheckResult(draw, bets.map((bet) => ({ bet, res: checkPrizeJs(bet.reds, bet.blue, draw) })));
+    const items = parsed.map((p) => ({
+      type: p.type,
+      bet: p.type === "single" ? p.singles[0] : null,
+      res: p.type === "single" ? checkPrizeJs(p.singles[0].reds, p.singles[0].blue, draw) : null,
+      reds: p.reds, blues: p.blues,
+      singles: p.type === "compound"
+        ? p.singles.map((s) => ({ bet: s, res: checkPrizeJs(s.reds, s.blue, draw) }))
+        : null,
+    }));
+    renderCheckResult(draw, items);
     return;
   }
-  // 本地后端兜底（无静态文件时逐注调用 /api/check）
+
+  // 本地后端兜底：批量调用 /api/check_batch（避免复式产生大量 HTTP 请求）
   try {
-    const out = [];
-    for (const bet of bets) {
-      const r = await fetch(`/api/check?issue=${issue}&red=${bet.reds.join(",")}&blue=${bet.blue}`);
-      const data = await r.json();
-      if (!data.ok) throw new Error(data.error);
-      out.push({ bet, res: data.result, draw: data.draw });
-    }
-    renderCheckResult(out[0].draw, out);
+    const allSingles = parsed.flatMap((p) => p.singles);
+    const r = await fetch(
+      `/api/check_batch?issue=${encodeURIComponent(issue)}&bets=${encodeURIComponent(JSON.stringify(allSingles))}`
+    );
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error);
+
+    let idx = 0;
+    const items = parsed.map((p) => {
+      if (p.type === "single") {
+        const s = p.singles[0];
+        return { type: "single", bet: s, res: data.results[idx++] };
+      }
+      const slice = data.results.slice(idx, idx + p.singles.length);
+      idx += p.singles.length;
+      return {
+        type: "compound", reds: p.reds, blues: p.blues,
+        singles: slice.map((res, i) => ({ bet: p.singles[i], res })),
+      };
+    });
+    renderCheckResult(data.draw, items);
   } catch (e) {
     $("ckStatus").textContent = e.message;
   }
@@ -574,20 +732,43 @@ function extractNums(line) {
   return nums;
 }
 
-/** 在数字序列中滑动提取合法投注（6 红 + 1 蓝），可识别一行多注 */
-function extractBets(nums) {
-  const bets = [];
-  let i = 0;
-  while (i + 7 <= nums.length) {
-    const reds = nums.slice(i, i + 6), blue = nums[i + 6];
-    if (new Set(reds).size === 6 && reds.every((n) => n >= 1 && n <= 33) && blue >= 1 && blue <= 16) {
-      bets.push({ reds, blue });
-      i += 7;
-    } else {
-      i += 1;
-    }
+/** 从一行 OCR 文本中提取投注（支持单式、红复式、蓝复式、全复式）。
+ *
+ * 优先按 '+' 分隔红球区/蓝球区；无 '+' 时默认前 N-1 个数字为红球、最后一个为蓝球。
+ * 返回去重后的投注描述对象数组：
+ *   { type: "single",   reds: [6个], blue: n }
+ *   { type: "compound", reds: [7-20个], blues: [1-16个] }
+ */
+function extractBetsFromLine(line) {
+  const cleaned = line.trim();
+  if (!cleaned) return [];
+
+  let redNums, blueNums;
+  if (cleaned.includes("+")) {
+    const [redPart, bluePart] = cleaned.split("+").map((s) => s.trim());
+    redNums = extractNums(redPart);
+    blueNums = extractNums(bluePart);
+  } else {
+    const nums = extractNums(cleaned);
+    if (nums.length < 7) return [];
+    redNums = nums.slice(0, -1);
+    blueNums = nums.slice(-1);
   }
-  return bets;
+
+  redNums = [...new Set(redNums)];
+  blueNums = [...new Set(blueNums)];
+
+  const redOk = redNums.length >= 6 && redNums.length <= 20
+    && redNums.every((n) => n >= 1 && n <= 33);
+  const blueOk = blueNums.length >= 1 && blueNums.length <= 16
+    && blueNums.every((n) => n >= 1 && n <= 16);
+  if (!redOk || !blueOk) return [];
+
+  const isCompound = redNums.length > 6 || blueNums.length > 1;
+  if (isCompound) {
+    return [{ type: "compound", reds: redNums.sort((a, b) => a - b), blues: blueNums.sort((a, b) => a - b) }];
+  }
+  return [{ type: "single", reds: redNums, blue: blueNums[0] }];
 }
 
 /** 从 OCR 全文中提取开奖期号与候选投注（去重）。
@@ -611,8 +792,10 @@ function parseOcrText(text) {
   const seen = new Set();
   const bets = [];
   betRegion.forEach((line) => {
-    extractBets(extractNums(line)).forEach((bet) => {
-      const s = bet.reds.map(pad).join(" ") + " + " + pad(bet.blue);
+    extractBetsFromLine(line).forEach((bet) => {
+      const s = bet.type === "single"
+        ? bet.reds.map(pad).join(" ") + " + " + pad(bet.blue)
+        : bet.reds.map(pad).join(" ") + " + " + bet.blues.map(pad).join(" ");
       if (!seen.has(s)) {
         seen.add(s);
         bets.push(s);

@@ -24,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ssq import (backtest, check_prize, find_draw, load_data, recommend,
-                 stats_dict, update_data, validate_ticket)
+                 stats_dict, update_data, validate_compound, validate_ticket)
 
 BASE_DIR = Path(__file__).parent
 STATIC_DIR = BASE_DIR / "static"
@@ -122,6 +122,34 @@ class SSQHandler(BaseHTTPRequestHandler):
                 return self._send_json({"ok": False, "error": f"未找到 {issue} 期开奖数据"
                                         f"（当前 {draws[0]['issue']} ~ {draws[-1]['issue']}）"}, 404)
             return self._send_json({"ok": True, "draw": draw, "result": check_prize(reds, blue, draw)})
+
+        if route == "/api/check_batch":
+            """批量中奖校验：前端把复式拆成的所有单式一次性提交，减少 HTTP 往返。"""
+            issue = query.get("issue", [""])[0].strip()
+            try:
+                bets_raw = json.loads(urllib.parse.unquote(query.get("bets", ["[]"])[0]))
+            except (json.JSONDecodeError, TypeError):
+                return self._send_json({"ok": False, "error": "bets 参数必须是 JSON 数组"}, 400)
+            if not isinstance(bets_raw, list) or not bets_raw:
+                return self._send_json({"ok": False, "error": "bets 不能为空"}, 400)
+
+            draws = load_data()
+            draw = find_draw(draws, issue)
+            if draw is None:
+                return self._send_json({"ok": False, "error": f"未找到 {issue} 期开奖数据"
+                                        f"（当前 {draws[0]['issue']} ~ {draws[-1]['issue']}）"}, 404)
+
+            results = []
+            for bet in bets_raw:
+                try:
+                    reds = sorted(int(x) for x in bet.get("reds", []))
+                    blue = int(bet.get("blue", 0))
+                except (ValueError, TypeError):
+                    return self._send_json({"ok": False, "error": " bets 内号码格式错误"}, 400)
+                if not validate_ticket(reds, blue):
+                    return self._send_json({"ok": False, "error": " bets 内存在不合法单式"}, 400)
+                results.append(check_prize(reds, blue, draw))
+            return self._send_json({"ok": True, "draw": draw, "results": results})
 
         if route == "/api/recommend":
             try:

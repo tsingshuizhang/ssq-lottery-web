@@ -49,13 +49,13 @@
     <!-- 中奖查询 -->
     <section class="panel">
       <h2>中奖查询 <small>（输入期号和彩票号码，对照开奖结果算奖级）</small></h2>
-      <p class="legend">📷 拍照技巧：镜头对准投注号码区域、票面放平、避免反光，识别率更高；识别结果请核对后再查询。</p>
+      <p class="legend">📷 拍照技巧：镜头对准投注号码区域、票面放平、避免反光，识别率更高；识别结果请核对后再查询。支持单式与复式（红球 7-20 个、蓝球 1-16 个）。</p>
       <div class="check-form">
         <label class="ck-issue">期号
           <input id="ckIssue" type="text" inputmode="numeric" placeholder="如 2026132">
         </label>
-        <label class="ck-bets-label">彩票号码（每行一注，格式：6 个红球 + 蓝球）
-          <textarea id="ckBets" rows="3" placeholder="01 05 12 18 23 30 + 07"></textarea>
+        <label class="ck-bets-label">彩票号码（每行一注/复式，格式：红球 + 蓝球）
+          <textarea id="ckBets" rows="3" placeholder="单式：01 05 12 18 23 30 + 07&#10;红复式：01 05 12 18 23 30 31 + 07&#10;蓝复式：01 05 12 18 23 30 + 07 09"></textarea>
         </label>
         <div class="ck-actions">
           <button id="btnCheck" class="btn primary">🔍 查询是否中奖</button>

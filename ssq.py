@@ -15,6 +15,7 @@
 """
 
 import argparse
+import itertools
 import json
 import random
 import re
@@ -574,6 +575,96 @@ def check_prize(reds, blue, draw):
     }
 
 
+def validate_compound(reds, blues):
+    """校验复式投注合法性。
+
+    红球复式：7-20 个红球 + 1 个蓝球
+    蓝球复式：6 个红球 + 2-16 个蓝球
+    全复式：  7-20 个红球 + 2-16 个蓝球
+    返回 True 表示是合法的复式投注（单式返回 False，由 validate_ticket 处理）。
+    """
+    reds = list(dict.fromkeys(reds))
+    blues = list(dict.fromkeys(blues))
+    red_ok = (
+        6 <= len(reds) <= 20
+        and all(RED_MIN <= n <= RED_MAX for n in reds)
+    )
+    blue_ok = (
+        1 <= len(blues) <= 16
+        and all(BLUE_MIN <= b <= BLUE_MAX for b in blues)
+    )
+    is_compound = len(reds) > 6 or len(blues) > 1
+    return red_ok and blue_ok and is_compound
+
+
+def expand_compound(reds, blues):
+    """将复式投注拆分为所有单式组合（红球 C(n,6) × 蓝球 m 注）。"""
+    reds = sorted(set(reds))
+    blues = sorted(set(blues))
+    singles = []
+    for combo in itertools.combinations(reds, 6):
+        for blue in blues:
+            singles.append({"reds": sorted(combo), "blue": blue})
+    return singles
+
+
+def _extract_ints(text):
+    """从文本中提取所有整数（用于解析投注行）。"""
+    return [int(x) for x in re.findall(r"\b\d+\b", text)]
+
+
+def parse_ticket_line(line):
+    """解析一行投注文本，支持单式与复式。
+
+    格式：
+      单式：  "01 05 12 18 23 30 + 07"
+      红复式："01 05 12 18 23 30 31 + 07"          （7-20 红 + 1 蓝）
+      蓝复式："01 05 12 18 23 30 + 07 09"          （6 红 + 2-16 蓝）
+      全复式："01 05 12 18 23 30 31 + 07 09"       （7-20 红 + 2-16 蓝）
+
+    若行中无 '+'，则默认前 N-1 个数字为红球，最后一个为蓝球。
+    返回 {"type": "single"/"compound", "singles": [...], "original": line,
+          "reds": [...], "blues": [...]}；解析失败返回 None。
+    """
+    line = line.strip()
+    if not line:
+        return None
+
+    if "+" in line:
+        red_part, blue_part = re.split(r"\s*\+\s*", line, maxsplit=1)
+        red_nums = _extract_ints(red_part)
+        blue_nums = _extract_ints(blue_part)
+    else:
+        nums = _extract_ints(line)
+        if len(nums) < 7:
+            return None
+        red_nums = nums[:-1]
+        blue_nums = nums[-1:]
+
+    reds = list(dict.fromkeys(red_nums))
+    blues = list(dict.fromkeys(blue_nums))
+
+    # 先尝试单式
+    if (len(reds) == 6 and len(blues) == 1
+            and validate_ticket(reds, blues[0])):
+        return {
+            "type": "single",
+            "singles": [{"reds": reds, "blue": blues[0]}],
+            "original": line,
+            "reds": reds, "blues": blues,
+        }
+
+    # 再尝试复式
+    if validate_compound(reds, blues):
+        return {
+            "type": "compound",
+            "singles": expand_compound(reds, blues),
+            "original": line,
+            "reds": reds, "blues": blues,
+        }
+    return None
+
+
 # ---------------------------------------------------------------- 入口
 
 def main():
@@ -588,7 +679,7 @@ def main():
                         help="回测每期的蒙特卡洛抽样次数（默认 50）")
     parser.add_argument("--check", metavar="ISSUE", help="查询彩票是否中奖（配合 --red / --blue）")
     parser.add_argument("--red", metavar="N1,N2,…,N6", help="彩票红球，逗号或空格分隔")
-    parser.add_argument("--blue", type=int, help="彩票蓝球")
+    parser.add_argument("--blue", help="彩票蓝球，支持复式多蓝球（逗号/空格分隔）")
     parser.add_argument("-u", "--update", type=int, metavar="N", nargs="?", const=100,
                         help="从官方接口更新最近 N 期数据（默认 100）")
     args = parser.parse_args()
@@ -608,24 +699,45 @@ def main():
             parser.error("--check 需要同时提供 --red 和 --blue")
         try:
             reds = sorted(int(x) for x in re.split(r"[,\s]+", args.red.strip()) if x)
+            blues = sorted(int(x) for x in re.split(r"[,\s]+", str(args.blue).strip()) if x)
         except ValueError:
-            sys.exit("红球格式错误，示例：--red \"01,05,12,18,23,30\"")
-        if not validate_ticket(reds, args.blue):
-            sys.exit("号码不合法：红球需 6 个 1-33 不重复，蓝球 1-16")
+            sys.exit("号码格式错误，示例：--red \"01,05,12,18,23,30\" --blue \"07,09\"")
+
+        parsed = parse_ticket_line(" ".join(f"{n:02d}" for n in reds) +
+                                   " + " + " ".join(f"{b:02d}" for b in blues))
+        if parsed is None:
+            sys.exit("号码不合法：红球 6-20 个（1-33 不重复），蓝球 1-16 个（不重复）；"
+                     "红球>6 或 蓝球>1 即为复式投注")
         draw = find_draw(draws, args.check)
         if draw is None:
             sys.exit(f"未找到 {args.check} 期开奖数据（当前数据 {draws[0]['issue']} ~ {draws[-1]['issue']}）")
-        r = check_prize(reds, args.blue, draw)
+
         actual = " ".join(f"{n:02d}" for n in draw["red"]) + f" + {draw['blue']:02d}"
-        ticket = " ".join(f"{n:02d}" for n in reds) + f" + {args.blue:02d}"
         print(f"\n{draw['issue']} 期开奖号码：{actual}")
-        print(f"您的彩票号码　　：{ticket}")
-        print(f"命中：红球 {r['red_hits']} 个（{' '.join(f'{n:02d}' for n in r['hit_reds']) or '无'}）"
-              f"，蓝球{'命中' if r['blue_hit'] else '未中'}")
-        if r["prize"]:
-            print(f"🎉 恭喜！中{r['prize']}（{r['amount']}）")
+        if parsed["type"] == "compound":
+            print(f"您的投注为复式：{len(parsed['reds'])} 个红球 + {len(parsed['blues'])} 个蓝球，"
+                  f"共 {len(parsed['singles'])} 注单式")
+            prize_counts = {}
+            for s in parsed["singles"]:
+                r = check_prize(s["reds"], s["blue"], draw)
+                if r["prize"]:
+                    prize_counts[r["prize"]] = prize_counts.get(r["prize"], 0) + 1
+            if prize_counts:
+                summary = "  ·  ".join(f"{p} × {c}" for p, c in sorted(
+                    prize_counts.items(), key=lambda kv: ["一等奖", "二等奖", "三等奖", "四等奖", "五等奖", "六等奖"].index(kv[0])))
+                print(f"🎉 中奖情况：{summary}")
+            else:
+                print("未中奖，再接再厉！")
         else:
-            print("未中奖，再接再厉！")
+            r = check_prize(parsed["singles"][0]["reds"], parsed["singles"][0]["blue"], draw)
+            ticket = " ".join(f"{n:02d}" for n in parsed["singles"][0]["reds"]) + f" + {parsed['singles'][0]['blue']:02d}"
+            print(f"您的彩票号码　　：{ticket}")
+            print(f"命中：红球 {r['red_hits']} 个（{' '.join(f'{n:02d}' for n in r['hit_reds']) or '无'}）"
+                  f"，蓝球{'命中' if r['blue_hit'] else '未中'}")
+            if r["prize"]:
+                print(f"🎉 恭喜！中{r['prize']}（{r['amount']}）")
+            else:
+                print("未中奖，再接再厉！")
         return
 
     if args.backtest:

@@ -932,6 +932,66 @@ function parseDantuoByLabels(lines) {
   return null;
 }
 
+/** 判断一个段落是否可能只是“倍数”行（单独一个 1-5 的小数字、无中文）。 */
+function isLikelyMultiplierGroup(lines, nums) {
+  if (nums.length !== 1) return false;
+  const hasChinese = lines.some((line) => /[\u4e00-\u9fa5]/.test(line));
+  return nums[0] <= 5 && !hasChinese;
+}
+
+/** 无标签时的块解析：按“红球数字块 + 蓝球数字块”的版面布局识别。
+ *
+ * 适用场景：OCR 没有识别出“红复/蓝复/红球/蓝球”等文字标签，
+ * 只保留了一行一行的数字块（如用户的识别原文）。
+ * 入参 blocks 是“按空行分割后的段落数组”，每个段落可含一行或多行。
+ * 规则：
+ *   - 先去掉含期号行的块；
+ *   - 计算每个块的有效号码（1-33）；
+ *   - 含有 >16 数字的块必为红球；
+ *   - 从末尾往前找第一个“全 ≤16”且不是单独倍数的块作为蓝球；
+ *   - 前面的块合并为红球。
+ */
+function parseByBlocks(blocks) {
+  // 1. 去掉含期号行的块
+  const groups = blocks
+    .filter((blk) => !/\b20\d{5}\b/.test(cleanOcrLine(stripBrackets(blk.join(" ")))))
+    .map((blk) => {
+      const nums = blk.flatMap((line) => extractNums(stripBrackets(line)))
+        .filter((n) => n >= 1 && n <= 33);
+      return { lines: blk, nums };
+    })
+    .filter((g) => g.nums.length > 0);
+
+  if (groups.length < 2) return null;
+
+  // 2. 从后往前找蓝球块：全 ≤16 且不像单独倍数
+  let blueIdx = -1;
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const hasLarge = groups[i].nums.some((n) => n > 16);
+    if (!hasLarge && !isLikelyMultiplierGroup(groups[i].lines, groups[i].nums)) {
+      blueIdx = i;
+      break;
+    }
+  }
+  if (blueIdx <= 0) return null;
+
+  const reds = [];
+  for (let i = 0; i < blueIdx; i++) {
+    reds.push(...groups[i].nums);
+  }
+  const blues = groups[blueIdx].nums;
+
+  const redSet = [...new Set(reds)].sort((a, b) => a - b);
+  const blueSet = [...new Set(blues)].sort((a, b) => a - b);
+  if (redSet.length < 6 || redSet.length > 20) return null;
+  if (blueSet.length < 1 || blueSet.length > 16) return null;
+
+  const isCompound = redSet.length > 6 || blueSet.length > 1;
+  return [isCompound
+    ? redSet.map(pad).join(" ") + " + " + blueSet.map(pad).join(" ")
+    : redSet.map(pad).join(" ") + " + " + pad(blueSet[0])];
+}
+
 /** 基于票面标签解析复式或胆拖投注。
  *
  * 优先检测“胆/拖”字样识别为胆拖；否则按红/蓝区识别为普通复式。
@@ -950,10 +1010,18 @@ function parseByLabels(lines) {
  *
  * 期号取票面上第一个 20XXXXX 形式的 7 位数字。
  * 投注区不再假设“一定在期号行之前”——不同彩票票面期号可能在上、在中或在下；
- * 因此标签解析使用“除期号行外的所有行”，依靠“红球/蓝球/红胆/红拖”等强标签定位投注。
+ * 因此解析使用“除期号段落外的所有段落”，依靠空行分隔的版面块和“红球/蓝球/红胆/红拖”等强标签定位投注。
  */
 function parseOcrText(text) {
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+
+  // 按空行分割成段落（保留票面区块结构），每个段落是行的数组
+  const paragraphs = text
+    .split(/\n\s*\n/)
+    .map((p) => p.split("\n").map((l) => l.trim()).filter(Boolean))
+    .filter((blk) => blk.length > 0);
+
+  // 期号按行检测；只把包含期号的那一行从后续解析中移除，而不是整个段落
   let issue = null, issueLineIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     const m = cleanOcrLine(lines[i]).match(/\b20\d{5}\b/);
@@ -963,17 +1031,28 @@ function parseOcrText(text) {
       break;
     }
   }
-  // 除期号行外的所有行（期号行本身不含投注号码）
   const candidateLines = issueLineIdx >= 0
     ? lines.slice(0, issueLineIdx).concat(lines.slice(issueLineIdx + 1))
     : lines;
 
-  // 优先按“红球/蓝球/红胆/红拖”等标签解析；失败再回退到行内解析
+  // 段落中只过滤掉期号行，保留同一段落内的其它投注相关行
+  const candidateParas = paragraphs
+    .map((blk) => blk.filter((line) => !/\b20\d{5}\b/.test(cleanOcrLine(line))))
+    .filter((blk) => blk.length > 0);
+
+  // 1. 优先按“红球/蓝球/红胆/红拖”等标签解析
   const labelBets = parseByLabels(candidateLines);
   if (labelBets && labelBets.length) {
     return { issue, bets: labelBets };
   }
 
+  // 2. 无标签时尝试数字块版面解析（利用空行分隔的段落）
+  const blockBets = parseByBlocks(candidateParas);
+  if (blockBets && blockBets.length) {
+    return { issue, bets: blockBets };
+  }
+
+  // 3. 最后回退到行内解析
   const seen = new Set();
   const bets = [];
   candidateLines.forEach((line) => {
